@@ -86,8 +86,15 @@ check "hero action" "Read the intro" "$(body /)"
 # The hero image is written quoted in the frontmatter (`html: '<img />'`).
 # Those quotes must not survive into the page: once they did, a `'` was
 # printed on each side of the picture.
-check "hero image" '<div class="hero"><img src="/mascot.svg"' "$(body /)"
+check "hero image" '<div class="hero"><img class="invert-dark" src="/mascot.svg"' "$(body /)"
 if body / | grep -q "'<img"; then bad "frontmatter quotes leaked into the page"; else ok; fi
+# Monochrome artwork is inverted on a dark page, from the toggle and from the
+# OS preference alike. The file itself is never touched. (`check` matches with
+# a basic regex, so no needle here may contain a bracket.)
+check "dark inverts monochrome artwork" "invert-dark{filter:invert(1)}" "$(body /)"
+check "os preference inverts too" "prefers-color-scheme:dark" "$(body /)"
+check "light theme leaves artwork alone" "invert-dark{filter:none}" "$(body /)"
+check "brand artwork inverts" 'class="brand" href="/"><img class="invert-dark"' "$(body /)"
 check "cards rendered" "class=\"card\"" "$(body /)"
 # The MDX `import ... from '@astrojs/starlight/components'` line must not
 # reach the page: check the body does NOT contain it.

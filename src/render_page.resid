@@ -166,7 +166,7 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
         + backdrop(c)
         + "<header class=\"top\">"
         + hamburger(c)
-        + "<a class=\"brand\" href=\"" + base + "/\"><img src=\"" + base + "/mascot.svg\" alt=\"\"><span>" + h_esc(c.b.title) + "</span></a>"
+        + "<a class=\"brand\" href=\"" + base + "/\"><img class=\"invert-dark\" src=\"" + base + "/mascot.svg\" alt=\"\"><span>" + h_esc(c.b.title) + "</span></a>"
         + "<span class=\"grow\"></span>"
         + search_box(c, base)
         + repolink
