@@ -54,6 +54,22 @@ pub Str book_path(Str dir, Str rel) {
     return dir + "/" + rel;
 }
 
+// `assets` is a comma-separated list, and each entry is its own path, so
+// they are resolved one by one: resolving the whole string at once would
+// make `src/assets,public` into one directory named `src/assets,public`.
+pub Str book_paths(Str dir, Str csv) {
+    List(Str) parts = str_split(csv, ",");
+    return book_paths_at(parts, 0, dir, "", false);
+}
+
+pub Str book_paths_at(List(Str) parts, Int i, Str dir, Str acc, Bool any) {
+    if (i >= parts.len()) { return if (any) { acc } else { "" }; }
+    Str e = str_trim(parts[i]);
+    Str sep = if (acc == "") { "" } else { "," };
+    Str next = acc + sep + book_path(dir, e);
+    return book_paths_at(parts, i + 1, dir, next, true);
+}
+
 // The value of `key = "value"` anywhere in the text, or "".
 Str bf(Str text, Str key) {
     List(Str) ls = str_split(text, "\n");

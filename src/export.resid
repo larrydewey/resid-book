@@ -72,27 +72,28 @@ Bool copy_asset(Str out, Str name, Str dir) {
 pub Bool export_assets(Ctx c, Str out, List(Str) dirs, Int i) {
     if (i >= dirs.len()) { return true; }
     Str dir = str_trim(dirs[i]);
-    Bool here = if (dir == "" || !filesystem.is_dir(dir)) { true } else { export_dir(c, out, dir, dir, "") };
+    Bool here = if (dir == "" || !filesystem.is_dir(dir)) { true } else { export_dir(c, out, dir, "") };
     Bool rest = export_assets(c, out, dirs, i + 1);
     return here && rest;
 }
 
-// `rel` is the destination-relative prefix; `src` the directory on disk.
+// `dir` is the directory being read now and `rel` where it lands, so a
+// descent into a subdirectory reads *that* directory rather than the root.
 @requires(filesystem)
-pub Bool export_dir(Ctx c, Str out, Str src, Str root, Str rel) {
+pub Bool export_dir(Ctx c, Str out, Str dir, Str rel) {
     if (rel != "") { filesystem.create_dir(out + "/" + rel); }
-    return export_entries(c, out, src, root, rel, sort(filesystem.list_dir(src)), 0);
+    return export_entries(c, out, dir, rel, sort(filesystem.list_dir(dir)), 0);
 }
 
 @requires(filesystem)
-pub Bool export_entries(Ctx c, Str out, Str src, Str root, Str rel, List(Str) names, Int i) {
+pub Bool export_entries(Ctx c, Str out, Str dir, Str rel, List(Str) names, Int i) {
     if (i >= names.len()) { return true; }
     Str name = names[i];
-    Str sub = if (rel == "") { src + "/" + name } else { src + "/" + rel + "/" + name };
+    Str sub = dir + "/" + name;
     Str reln = if (rel == "") { name } else { rel + "/" + name };
     Bool isd = filesystem.is_dir(sub);
-    Bool one = if (isd) { export_dir(c, out, src, root, reln) } else { export_file(out, reln, sub) };
-    Bool rest = export_entries(c, out, src, root, rel, names, i + 1);
+    Bool one = if (isd) { export_dir(c, out, sub, reln) } else { export_file(out, reln, sub) };
+    Bool rest = export_entries(c, out, dir, rel, names, i + 1);
     return one && rest;
 }
 

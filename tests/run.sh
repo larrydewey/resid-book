@@ -86,6 +86,24 @@ check "highlighted comment" '<span class="c">' "$(body /intro/)"
 check "highlighted keyword" '<span class="k">' "$(body /intro/)"
 check "code block title" "<figcaption>Output</figcaption>" "$(body /intro/)"
 
+# ── The static export: assets, nested included ─────────────────────────
+# The export must copy the book's asset directories whole, and must not
+# re-read the top level while descending (which wrote 0-byte files).
+rm -rf "$T/dist"
+if "$T/resid-book" export examples/sample/book.toml "$T/dist" >/dev/null 2>&1; then
+    for f in index.html intro/index.html numbers/index.html mascot.svg nested.svg img/mark.svg book.js; do
+        [ -s "$T/dist/$f" ] && ok || bad "export missing or empty: $f"
+    done
+    # .nojekyll is a marker: it must exist, and must be empty.
+    [ -f "$T/dist/.nojekyll" ] && ok || bad "export missing: .nojekyll"
+else
+    bad "export failed"
+fi
+# Every image a page references must exist in the export, and be non-empty.
+for r in $(grep -rhoE '\(/(img/)?[A-Za-z0-9_./-]+\.svg\)' examples/sample/src/content/docs | tr -d '()' | sort -u); do
+    [ -s "$T/dist${r}" ] && ok || bad "referenced asset not exported: $r"
+done
+
 # ── Live search (a Datastar GET) ───────────────────────────────────────
 SIG="$(python3 -c 'import urllib.parse;print(urllib.parse.quote("{\"q\":\"decimals\"}"))')"
 check "search finds a page" "Numbers" "$(curl -s -H 'Datastar-Request: true' "http://127.0.0.1:$PORT/ui/search?datastar=$SIG")"

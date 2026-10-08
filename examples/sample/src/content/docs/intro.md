@@ -39,3 +39,10 @@ Inline `code` works too.
 
 A [relative link](./numbers) resolves against the page's own URL, so it
 works without knowing where the book is mounted.
+## Assets
+
+Images beside the book are copied by the export, nested directories
+included:
+
+![a mark](/img/mark.svg)
+![another](/nested.svg)

@@ -21,7 +21,7 @@ pub Ctx ctx_load(Str book_toml) {
     Book b = book_read(book_toml);
     List(Str) pages = nav_pages(b.nav);
     Str content = book_path(b.dir, b.content);
-    Str assets = book_path(b.dir, b.assets);
+    Str assets = book_paths(b.dir, b.assets);
     return Ctx { .b = b, .docs = search_index(content, pages, 0, ListBuf()), .pages = pages, .mode = "serve", .content = content, .assets = assets };
 }
 
