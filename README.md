@@ -70,8 +70,21 @@ Markdown is only half a page, so the server adds the rest:
 
 Starlight's `CardGrid`, `Card` and `LinkCard` are understood, the
 `import ... from '@astrojs/starlight/components'` line is dropped, and a
-trusted `<img>` is passed through. Nothing else is treated as markup: raw
-HTML is not enabled, so a page's own text can never become a script.
+card's children are de-indented the way MDX de-indents JSX children (so
+indented prose is prose, not a code block). A trusted `<img>` and `<div>`
+are passed through. Nothing else is treated as markup: raw HTML is not
+enabled, so a page's own text can never become a script.
+
+### Artwork that follows the theme
+
+`{%asset mascot.svg%}` in a page's text is replaced by the file itself.
+
+An SVG loaded with `<img src>` is its own document, so the page's CSS cannot
+reach it and artwork cannot be themed at all. Written into the page instead,
+it reads the page's custom properties and follows the theme **toggle**, not
+only the operating system. The bundled `mascot.svg` does this with
+`--mascot-fill` and `--mascot-line`, and falls back to `prefers-color-scheme`
+when it stands alone.
 
 ## Not yet
 

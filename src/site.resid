@@ -34,41 +34,12 @@ pub Str book_js() {
         + "})();";
 }
 
-// An asset is served only when it names a real file under one of the
-// book's asset directories (`assets = "dir,dir"`), nested directories
-// included: every segment must be a plain name, so `..` cannot climb out.
-Bool asset_ok(Str name) { return asset_segments_ok(str_split(name, "/"), 0); }
-
-Bool asset_segments_ok(List(Str) segs, Int i) {
-    if (i >= segs.len()) { return true; }
-    Str s = segs[i];
-    if (s == "" || s == "." || s == "..") { return false; }
-    return asset_segments_ok(segs, i + 1);
-}
-
-// The first of the comma-separated asset directories that has `name`.
-@requires(filesystem(readonly))
-Str asset_path(Str dirs, Str name) {
-    if (!asset_ok(name)) { return ""; }
-    List(Str) ls = str_split(dirs, ",");
-    return asset_path_at(ls, 0, name, str_trim(dirs));
-}
-
-@requires(filesystem(readonly))
-Str asset_path_at(List(Str) ls, Int i, Str name, Str all) {
-    if (i >= ls.len()) { return ""; }
-    Str d = str_trim(ls[i]);
-    Str p = if (d == "") { "" } else { d + "/" + name };
-    if (p != "" && filesystem.exists(p) && !filesystem.is_dir(p)) { return p; }
-    return asset_path_at(ls, i + 1, name, all);
-}
-
 // ─── Routing ────────────────────────────────────────────────────────────
 
 @requires(filesystem(readonly))
 HttpReply not_found(Ctx c) {
     Str inner = "<h1>Not found</h1><p>No such page. <a href=\"" + c.b.base + "/\">Start here</a>.</p>";
-    return html_status(404, layout(c, "not-found", inner, empty_headings()));
+    return html_status(404, layout(c, "not-found", inner, empty_headings(), false));
 }
 
 // The rendered page for `slug`, or "" when there is none.

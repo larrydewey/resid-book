@@ -12,7 +12,7 @@ import "highlight.resid";
 
 pub Str body_html(Str body, Str base) {
     List(Str) ls = str_split(str_replace(body, "\r\n", "\n"), "\n");
-    return bh(ls, 0, base, StrBuf(), []);
+    return bh(ls, 0, base, StrBuf(), [], false);
 }
 
 Str flush(StrBuf out, List(Str) md, Str base) {
@@ -20,31 +20,52 @@ Str flush(StrBuf out, List(Str) md, Str base) {
     return out.push(md_html(str_join(md, "\n"), base)).finish();
 }
 
-Str bh(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md) {
+Str bh(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md, Bool in_card) {
     if (i >= ls.len()) { return flush(out, md, base); }
     Str t = str_trim(ls[i]);
     // Fenced code.
     if (str_starts_with(t, "```")) {
         StrBuf flushed = if (md.len() == 0) { out } else { out.push(md_html(str_join(md, "\n"), base)) };
         Int end = fence_end(ls, i + 1);
-        return bh(ls, end + 1, base, flushed.push(code_block(t, ls[i + 1..end])), []);
+        return bh(ls, end + 1, base, flushed.push(code_block(t, ls[i + 1..end])), [], in_card);
     }
-    if (str_starts_with(t, "import ")) { return bh(ls, i + 1, base, out, md); }
-    if (t == "<CardGrid>") { return tag_raw(ls, i, base, out, md, "<div class=\"cards\">"); }
-    if (t == "</CardGrid>") { return tag_raw(ls, i, base, out, md, "</div>"); }
+    if (str_starts_with(t, "import ")) { return bh(ls, i + 1, base, out, md, in_card); }
+    if (t == "<CardGrid>") { return tag_raw(ls, i, base, out, md, "<div class=\"cards\">", in_card); }
+    if (t == "</CardGrid>") { return tag_raw(ls, i, base, out, md, "</div>", false); }
     if (str_starts_with(t, "<Card ") || t == "<Card>") {
-        return tag_raw(ls, i, base, out, md, card_open(t));
+        return tag_raw(ls, i, base, out, md, card_open(t), true);
     }
-    if (t == "</Card>") { return tag_raw(ls, i, base, out, md, "</div>"); }
-    if (str_starts_with(t, "<LinkCard")) { return tag_raw(ls, i, base, out, md, link_card(t)); }
-    if (str_starts_with(t, "<img ") || str_starts_with(t, "<img/")) { return tag_raw(ls, i, base, out, md, t); }
-    return bh(ls, i + 1, base, out, md.concat([ls[i]]));
+    if (t == "</Card>") { return tag_raw(ls, i, base, out, md, "</div>", false); }
+    if (str_starts_with(t, "<LinkCard")) { return tag_raw(ls, i, base, out, md, link_card(t), false); }
+    // The few raw elements a book needs for layout, and nothing else: a
+    // page's own text still cannot become markup.
+    if (str_starts_with(t, "<img ") || str_starts_with(t, "<img/")) { return tag_raw(ls, i, base, out, md, t, in_card); }
+    if (str_starts_with(t, "<div ")) { return tag_raw(ls, i, base, out, md, t, in_card); }
+    if (t == "</div>") { return tag_raw(ls, i, base, out, md, t, in_card); }
+    // A card's children are indented in the source to line up with the
+    // tags; Markdown would read that indent as a code block, so it comes
+    // off before the text is rendered.
+    Str line = if (in_card) { deindent(ls[i]) } else { ls[i] };
+    return bh(ls, i + 1, base, out, md.concat([line]), in_card);
 }
 
 // Emit raw HTML after flushing any pending Markdown.
-Str tag_raw(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md, Str raw) {
+Str tag_raw(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md, Str raw, Bool in_card) {
     StrBuf flushed = if (md.len() == 0) { out } else { out.push(md_html(str_join(md, "\n"), base)) };
-    return bh(ls, i + 1, base, flushed.push(raw), []);
+    return bh(ls, i + 1, base, flushed.push(raw), [], in_card);
+}
+
+// JSX children are written indented to line up under the tag, and Markdown
+// reads an indent of four spaces as a code block. The whole indent comes
+// off: MDX de-indents its children too, and one level is not enough when
+// the author lined the text up inside nested tags.
+pub Str deindent(Str s) { return deindent_at(s, 0); }
+
+pub Str deindent_at(Str s, Int i) {
+    if (i >= str_len(s)) { return s; }
+    if (str_char_at(s, i) == 9) { return deindent_at(s, i + 1); }
+    if (str_starts_with(str_slice(s, i, str_len(s)), "    ")) { return str_slice(s, i + 4, str_len(s)); }
+    return str_slice(s, i, str_len(s));
 }
 
 Int fence_end(List(Str) ls, Int i) {
@@ -97,3 +118,71 @@ Str h_esc(Str s) {
 }
 
 Str esc_attr(Str s) { return h_esc(s); }
+
+// An asset is served only when it names a real file under one of the
+// book's asset directories (`assets = "dir,dir"`), nested directories
+// included: every segment must be a plain name, so `..` cannot climb out.
+pub Bool asset_ok(Str name) { return asset_segments_ok(str_split(name, "/"), 0); }
+
+pub Bool asset_segments_ok(List(Str) segs, Int i) {
+    if (i >= segs.len()) { return true; }
+    Str s = segs[i];
+    if (s == "" || s == "." || s == "..") { return false; }
+    return asset_segments_ok(segs, i + 1);
+}
+
+// The first of the comma-separated asset directories that has `name`.
+@requires(filesystem(readonly))
+pub Str asset_path(Str dirs, Str name) {
+    if (!asset_ok(name)) { return ""; }
+    List(Str) ls = str_split(dirs, ",");
+    return asset_path_at(ls, 0, name, str_trim(dirs));
+}
+
+@requires(filesystem(readonly))
+pub Str asset_path_at(List(Str) ls, Int i, Str name, Str all) {
+    if (i >= ls.len()) { return ""; }
+    Str d = str_trim(ls[i]);
+    Str p = if (d == "") { "" } else { d + "/" + name };
+    if (p != "" && filesystem.exists(p) && !filesystem.is_dir(p)) { return p; }
+    return asset_path_at(ls, i + 1, name, all);
+}
+
+// ─── Inlining an asset ─────────────────────────────────────────────────
+
+// `{%asset mascot.svg%}` in a page's text is replaced by the file itself.
+//
+// An SVG loaded with <img src> is its own document: the page's CSS cannot
+// reach it, so artwork that should follow the theme (a mascot, a diagram)
+// cannot be themed at all. Written into the page instead, it reads the
+// page's custom properties and follows the theme's toggle, not only the
+// operating system's preference.
+@requires(filesystem(readonly))
+pub Str asset_text(Str assets, Str name) {
+    Str p = asset_path(assets, name);
+    if (p == "") { return ""; }
+    return filesystem.read_all(p);
+}
+
+// Every `{%asset name%}` in `html`, replaced by that file's text.
+@requires(filesystem(readonly))
+pub Str expand_assets(Str assets, Str html) {
+    Int p = str_index_of(html, "{%asset ", 0);
+    if (p < 0) { return html; }
+    Str name = asset_name(html, p + 8);
+    Str end = if (name == "") { html } else { str_slice(html, p + 8 + str_len(name) + 2, str_len(html)) };
+    Str body = if (name == "") { "" } else { asset_text(assets, name) };
+    Str rest = if (name == "") { str_slice(html, p + 8, str_len(html)) } else { expand_assets(assets, end) };
+    return str_slice(html, 0, p) + body + rest;
+}
+
+// The asset name between the marker and `%}`, or "" when there is none.
+pub Str asset_name(Str html, Int i) {
+    return asset_name_at(html, i, i);
+}
+
+pub Str asset_name_at(Str html, Int i, Int start) {
+    if (i + 1 >= str_len(html)) { return ""; }
+    if (str_char_at(html, i) == 37 && str_char_at(html, i + 1) == 125) { return str_slice(html, start, i); }
+    return asset_name_at(html, i + 1, start);
+}

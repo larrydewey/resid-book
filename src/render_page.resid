@@ -153,7 +153,7 @@ pub Str pager(Ctx c, Str slug) {
     return "<nav class=\"pager\">" + p + n + "</nav>";
 }
 
-pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc) {
+pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
     Str base = c.b.base;
     Str client = if (c.mode == "export") { "" } else { ds_script_tag() };
     Str repolink = if (c.b.repository == "") { "" } else { "<a class=\"repo\" href=\"" + h_esc(c.b.repository) + "\">GitHub</a>" };
@@ -172,7 +172,7 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc) {
         + repolink
         + "<button class=\"icon\" id=\"theme-toggle\" aria-label=\"Theme\">&#9681;</button>"
         + "</header>"
-        + "<div class=\"shell\">" + sidebar(c, slug) + "<main><div class=\"main\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
+        + "<div class=\"shell" + (if (toc.len() == 0) { " no-toc" } else { "" }) + "\">" + sidebar(c, slug) + "<main><div class=\"main" + (if (wide) { " wide" } else { "" }) + "\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
         + "</body></html>";
 }
 
@@ -207,7 +207,7 @@ pub Str search_box(Ctx c, Str base) {
 // The whole document for a page: what the server would answer with.
 @requires(filesystem(readonly))
 pub Str page_document(Ctx c, PageMeta x) {
-    return layout(c, x.slug, page_main(c, x), toc_of(x));
+    return layout(c, x.slug, page_main(c, x), toc_of(x), x.splash);
 }
 
 pub HttpReply html_reply(Str body) { return html_status(200, body); }
@@ -239,10 +239,13 @@ pub Str hero(PageMeta m) {
 @requires(filesystem(readonly))
 pub Str page_main(Ctx c, PageMeta m) {
     Str body = body_html(m.body, c.b.base + "/");
-    if (m.splash) { return hero(m) + body; }
+    // `{%asset name%}` is expanded over the finished markup, so it works in
+    // the body and in the hero's frontmatter alike.
+    if (m.splash) { return expand_assets(c.assets, hero(m) + body); }
     Str f = if (c.b.edit_base == "") { "" } else { page_file(c.content, m.slug) };
     Str edit = if (f == "") { "" } else { "<p class=\"edit\"><a href=\"" + h_esc(c.b.edit_base + strip_book_dir(f, c.b.dir)) + "\">Edit this page</a></p>" };
-    return "<h1>" + h_esc(m.title) + "</h1>"
+    Str page = "<h1>" + h_esc(m.title) + "</h1>"
         + (if (m.description != "") { "<p class=\"lead\">" + h_esc(m.description) + "</p>" } else { "" })
         + body + edit + pager(c, m.slug);
+    return expand_assets(c.assets, page);
 }
