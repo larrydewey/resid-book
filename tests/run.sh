@@ -83,6 +83,11 @@ checkr "missing page" 404 "/nope"
 # ── Home page: hero, cards, folded code ────────────────────────────────
 check "hero tagline" "A book that is a directory" "$(body /)"
 check "hero action" "Read the intro" "$(body /)"
+# The hero image is written quoted in the frontmatter (`html: '<img />'`).
+# Those quotes must not survive into the page: once they did, a `'` was
+# printed on each side of the picture.
+check "hero image" '<div class="hero"><img src="/mascot.svg"' "$(body /)"
+if body / | grep -q "'<img"; then bad "frontmatter quotes leaked into the page"; else ok; fi
 check "cards rendered" "class=\"card\"" "$(body /)"
 # The MDX `import ... from '@astrojs/starlight/components'` line must not
 # reach the page: check the body does NOT contain it.

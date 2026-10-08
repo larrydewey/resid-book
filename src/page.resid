@@ -57,6 +57,15 @@ Int fm_end(List(Str) ls, Int i) {
     return fm_end(ls, i + 1);
 }
 
+// One layer of surrounding quotes, when the author wrote them. The
+// frontmatter is not TOML, so a value kept its apostrophes and rendered
+// them: `html: '<img />'` put a `'` on either side of the picture.
+Str fm_unquote(Str s) {
+    if (str_len(s) >= 2 && str_starts_with(s, "'") && str_ends_with(s, "'")) { return str_slice(s, 1, str_len(s) - 1); }
+    if (str_len(s) >= 2 && str_starts_with(s, "\"") && str_ends_with(s, "\"")) { return str_slice(s, 1, str_len(s) - 1); }
+    return s;
+}
+
 Str fm_field(List(Str) ls, Str key) {
     return fm_field_at(ls, 0, key + ":");
 }
@@ -64,7 +73,7 @@ Str fm_field(List(Str) ls, Str key) {
 Str fm_field_at(List(Str) ls, Int i, Str key) {
     if (i >= ls.len()) { return ""; }
     Str s = str_trim(ls[i]);
-    if (str_starts_with(s, key)) { return str_trim(str_slice(s, str_len(key), str_len(s))); }
+    if (str_starts_with(s, key)) { return fm_unquote(str_trim(str_slice(s, str_len(key), str_len(s)))); }
     return fm_field_at(ls, i + 1, key);
 }
 
@@ -75,7 +84,7 @@ Str fm_tagline_at(List(Str) ls, Int i, Bool in_hero) {
     if (i >= ls.len()) { return ""; }
     Str s = str_trim(ls[i]);
     if (s == "hero:") { return fm_tagline_at(ls, i + 1, true); }
-    if (in_hero && str_starts_with(s, "tagline:")) { return str_trim(str_slice(s, 8, str_len(s))); }
+    if (in_hero && str_starts_with(s, "tagline:")) { return fm_unquote(str_trim(str_slice(s, 8, str_len(s)))); }
     return fm_tagline_at(ls, i + 1, in_hero);
 }
 
@@ -87,7 +96,7 @@ Str fm_image_at(List(Str) ls, Int i, Bool in_hero) {
     if (i >= ls.len()) { return ""; }
     Str s = str_trim(ls[i]);
     if (s == "hero:") { return fm_image_at(ls, i + 1, true); }
-    if (in_hero && str_starts_with(s, "html:")) { return str_trim(str_slice(s, 5, str_len(s))); }
+    if (in_hero && str_starts_with(s, "html:")) { return fm_unquote(str_trim(str_slice(s, 5, str_len(s)))); }
     return fm_image_at(ls, i + 1, in_hero);
 }
 
@@ -97,7 +106,7 @@ List(HeroAction) fm_actions(List(Str) ls, Int i, ListBuf(HeroAction) acc) {
     if (i >= ls.len()) { return acc.finish(); }
     Str s = str_trim(ls[i]);
     if (str_starts_with(s, "- text:")) {
-        Str text = str_trim(str_slice(s, 7, str_len(s)));
+        Str text = fm_unquote(str_trim(str_slice(s, 7, str_len(s))));
         Str link = fm_next_key(ls, i + 1, "link:");
         Bool minimal = fm_next_key(ls, i + 1, "variant:") == "minimal";
         return fm_actions(ls, i + 1, acc.push(HeroAction { .text = text, .link = link, .minimal = minimal }));
@@ -110,7 +119,7 @@ Str fm_next_key(List(Str) ls, Int i, Str key) {
     if (i >= ls.len()) { return ""; }
     Str s = str_trim(ls[i]);
     if (str_starts_with(s, "- ")) { return ""; }
-    if (str_starts_with(s, key)) { return str_trim(str_slice(s, str_len(key), str_len(s))); }
+    if (str_starts_with(s, key)) { return fm_unquote(str_trim(str_slice(s, str_len(key), str_len(s)))); }
     return fm_next_key(ls, i + 1, key);
 }
 
