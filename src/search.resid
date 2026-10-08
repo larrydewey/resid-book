@@ -1,0 +1,84 @@
+// src/search.resid — the search index and the live search results.
+//
+// The whole book is small, so the index is the pages themselves: for each
+// page, its slug, title, description and body text, lower-cased once at
+// startup. A query is a substring test; the result list is HTML that a
+// Datastar request splices into the search box's dropdown.
+
+import "resid-datastar/datastar.resid";
+import "page.resid";
+import "book.resid";
+
+pub type Doc = { Str slug; Str title; Str description; Str hay; Str body; };
+
+// The whole loaded book: its config, the page order from the nav, the
+// search documents, and the mode ("serve" answers HTTP, "export" writes
+// static files).
+pub type Ctx = { Book b; List(Doc) docs; List(Str) pages; Str mode; Str content; Str assets; };
+
+@requires(filesystem(readonly))
+pub Ctx ctx_load(Str book_toml) {
+    Book b = book_read(book_toml);
+    List(Str) pages = nav_pages(b.nav);
+    Str content = book_path(b.dir, b.content);
+    Str assets = book_path(b.dir, b.assets);
+    return Ctx { .b = b, .docs = search_index(content, pages, 0, ListBuf()), .pages = pages, .mode = "serve", .content = content, .assets = assets };
+}
+
+@requires(filesystem(readonly))
+pub List(Doc) search_index(Str content, List(Str) slugs, Int i, ListBuf(Doc) acc) {
+    if (i >= slugs.len()) { return acc.finish(); }
+    Option(PageMeta) p = page_load(content, slugs[i]);
+    Doc d = match p {
+        Some(m) => Doc { .slug = slugs[i], .title = m.title, .description = m.description, .hay = str_to_lower(slugs[i] + " " + m.title + " " + m.description + " " + strip_code(m.body)), .body = m.body },
+        None => Doc { .slug = slugs[i], .title = slugs[i], .description = "", .hay = str_to_lower(slugs[i]), .body = "" }
+    };
+    return search_index(content, slugs, i + 1, acc.push(d));
+}
+
+// The body without code, so a query matches prose, not listing symbols.
+Str strip_code(Str body) {
+    List(Str) ls = str_split(body, "\n");
+    return strip_code_at(ls, 0, false, StrBuf());
+}
+
+Str strip_code_at(List(Str) ls, Int i, Bool in_fence, StrBuf b) {
+    if (i >= ls.len()) { return b.finish(); }
+    if (str_starts_with(str_trim(ls[i]), "```")) { return strip_code_at(ls, i + 1, !in_fence, b); }
+    if (in_fence) { return strip_code_at(ls, i + 1, in_fence, b); }
+    return strip_code_at(ls, i + 1, in_fence, b.push(ls[i]).push(" "));
+}
+
+pub List(Doc) search_find(List(Doc) docs, Str q, Int i, ListBuf(Doc) acc) {
+    if (i >= docs.len()) { return acc.finish(); }
+    if (str_contains(docs[i].hay, q)) { return search_find(docs, q, i + 1, acc.push(docs[i])); }
+    return search_find(docs, q, i + 1, acc);
+}
+
+// The dropdown's contents, as one patchable element.
+pub Str search_results(List(Doc) docs, Str q, Str base) {
+    if (q == "") { return "<div id=\"search-results\" class=\"results\" data-show=\"false\"></div>"; }
+    List(Doc) hits = search_find(docs, str_to_lower(str_trim(q)), 0, ListBuf());
+    if (hits.len() == 0) {
+        return "<div id=\"search-results\" class=\"results\" data-show=\"true\"><div class=\"none\">No page matches &ldquo;" + h_esc(q) + "&rdquo;.</div></div>";
+    }
+    return "<div id=\"search-results\" class=\"results\" data-show=\"true\">" + result_rows(hits, base, 0, StrBuf()) + "</div>";
+}
+
+Str result_rows(List(Doc) docs, Str base, Int i, StrBuf b) {
+    if (i >= docs.len()) { return b.finish(); }
+    Doc d = docs[i];
+    Str url = book_url(d.slug, base);
+    Str row = "<a href=\"" + h_esc(url) + "\"><strong>" + h_esc(d.title) + "</strong><span class=\"d\">" + h_esc(if (d.description != "") { d.description } else { d.slug }) + "</span></a>";
+    return result_rows(docs, base, i + 1, b.push(row));
+}
+
+// The site path for a slug. The server serves under the book's base.
+pub Str book_url(Str slug, Str base) {
+    if (slug == "") { return base + "/"; }
+    return base + "/" + slug + "/";
+}
+
+Str h_esc(Str s) {
+    return str_replace(str_replace(str_replace(str_replace(str_replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&#39;");
+}

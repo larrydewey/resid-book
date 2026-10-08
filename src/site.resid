@@ -1,0 +1,184 @@
+// resid-book — a book / documentation site server, in Resid, on resid-datastar.
+//
+// A book is a content directory of Markdown (and a little MDX) plus a
+// `book.toml`: the title, the edit link, and a flat `nav` array that names
+// the topics, groups and pages. The server renders pages, a sidebar, an on-
+// this-page table of contents, previous/next links and live search, and it
+// serves Datastar's own embedded client, so a book needs no Node and no
+// build step.
+//
+//   residc src/site.resid -o resid-book -depmap deps.txt
+//   ./resid-book <book.toml> [--port N] [--port-file F] [--cdn]
+
+import "resid-datastar/datastar.resid";
+import "book.resid";
+import "page.resid";
+import "render.resid";
+import "search.resid";
+import "export.resid";
+import "render_page.resid";
+import "theme.resid";
+
+// ─── Assets ─────────────────────────────────────────────────────────────
+
+pub Str book_js() {
+    return "(function(){var d=document.documentElement,t=localStorage.getItem('theme')||'';"
+        + "if(t)d.dataset.theme=t;"
+        + "var b=document.getElementById('theme-toggle');"
+        + "if(b)b.addEventListener('click',function(){var c=d.dataset.theme==='dark'?'light':'dark';d.dataset.theme=c;localStorage.setItem('theme',c);});"
+        + "var n=document.getElementById('nav-toggle'),v=document.getElementById('nav-backdrop');"
+        + "function set(o){document.body.dataset.nav=o?'open':'';}"
+        + "if(n)n.addEventListener('click',function(){set(document.body.dataset.nav!=='open');});"
+        + "if(v)v.addEventListener('click',function(){set(false);});"
+        + "document.addEventListener('keydown',function(e){if(e.key==='/'&&e.target.tagName!=='INPUT'){var i=document.querySelector('.search input');if(i){e.preventDefault();i.focus();}}});"
+        + "})();";
+}
+
+// An asset name is served only when it is a plain file name beside one of
+// the book's asset directories (`assets = "dir,dir"`).
+Bool asset_ok(Str name) {
+    if (name == "" || str_index_of(name, "/", 0) >= 0 || str_index_of(name, "..", 0) >= 0) { return false; }
+    return true;
+}
+
+// The first of the comma-separated asset directories that has `name`.
+@requires(filesystem(readonly))
+Str asset_path(Str dirs, Str name) {
+    if (!asset_ok(name)) { return ""; }
+    List(Str) ls = str_split(dirs, ",");
+    return asset_path_at(ls, 0, name, str_trim(dirs));
+}
+
+@requires(filesystem(readonly))
+Str asset_path_at(List(Str) ls, Int i, Str name, Str all) {
+    if (i >= ls.len()) { return ""; }
+    Str d = str_trim(ls[i]);
+    Str p = if (d == "") { "" } else { d + "/" + name };
+    if (p != "" && filesystem.exists(p)) { return p; }
+    return asset_path_at(ls, i + 1, name, all);
+}
+
+// ─── Routing ────────────────────────────────────────────────────────────
+
+@requires(filesystem(readonly))
+HttpReply not_found(Ctx c) {
+    Str inner = "<h1>Not found</h1><p>No such page. <a href=\"" + c.b.base + "/\">Start here</a>.</p>";
+    return html_status(404, layout(c, "not-found", inner, empty_headings()));
+}
+
+// The rendered page for `slug`, or "" when there is none.
+@requires(filesystem(readonly))
+Str render_page(Ctx c, Str slug) {
+    Option(PageMeta) m = page_load(c.content, slug);
+    return match m {
+        Some(x) => render_page_html(c, x),
+        None => ""
+    };
+}
+
+@requires(filesystem(readonly))
+Str render_page_html(Ctx c, PageMeta x) { return page_document(c, x); }
+
+@requires(filesystem(readonly))
+HttpOut(Int) route(Ctx c, HttpRequest r) {
+    if (r.method != "GET" && r.method != "HEAD") {
+        return Whole(http_with_header(http_reply_status(405), "Allow", "GET, HEAD"));
+    }
+    if (r.path == ds_client_path()) { return Whole(ds_client_reply()); }
+    Str base = c.b.base;
+    Str p = strip_base(r.path, base);
+    if (p == "/book.js" || p == "/theme.js") {
+        HttpReply js = http_reply_text(200, "text/javascript; charset=utf-8", book_js());
+        return Whole(http_with_header(js, "Cache-Control", "max-age=3600"));
+    }
+    if (p == "/ui/search") {
+        Result(Value, Str) s = ds_read_signals_value(r);
+        Str q = ds_signal_text(s else { VUnit }, "q");
+        return Whole(ds_reply([ds_patch_elements(search_results(c.docs, q, base))]));
+    }
+    Str slug = path_slug(p);
+    Str page = render_page(c, slug);
+    if (page != "") { return Whole(html_reply(page)); }
+    Str name = path_slug(p);
+    Str apath = asset_path(c.assets, name);
+    if (apath != "") {
+        List(Int) bytes = filesystem.read_bytes(apath);
+        HttpReply r2 = http_reply_bytes(200, asset_ext(name), bytes);
+        return Whole(http_with_header(r2, "Cache-Control", "max-age=3600"));
+    }
+    return Whole(not_found(c));
+}
+
+// ─── Command line ───────────────────────────────────────────────────────
+
+Str usage() { return "usage: resid-book <book.toml> [--port N] [--port-file F] [--cdn] [--public]\n       resid-book export <book.toml> <out-dir>"; }
+
+type Opts = { Str book; Int port; Str port_file; Bool cdn; Bool public; Bool ok; };
+
+Opts with(Opts o, Str book, Int port, Str port_file, Bool cdn, Bool public, Bool ok) {
+    return Opts { .book = book, .port = port, .port_file = port_file, .cdn = cdn, .public = public, .ok = ok };
+}
+
+// The book to export: every nav page, plus the home page first so `""` is
+// written even when it is not in the nav.
+List(Str) export_slugs(Ctx c) {
+    List(Str) none = [];
+    return none.concat(c.pages);
+}
+
+Int num(Str s) { return if (str_is_int(s)) { str_parse_int(s) } else { -1 }; }
+
+@requires(args)
+Opts parse(Int i, Opts o) {
+    if (i >= args.count()) { return o; }
+    Str a = args.get(i);
+    Str v = if (i + 1 < args.count()) { args.get(i + 1) } else { "" };
+    Bool has = i + 1 < args.count();
+    if (a == "--port" && has) { return parse(i + 2, with(o, o.book, num(v), o.port_file, o.cdn, o.public, o.ok && num(v) >= 0)); }
+    if (a == "--port-file" && has) { return parse(i + 2, with(o, o.book, o.port, v, o.cdn, o.public, o.ok)); }
+    if (a == "--cdn") { return parse(i + 1, with(o, o.book, o.port, o.port_file, true, o.public, o.ok)); }
+    if (a == "--public") { return parse(i + 1, with(o, o.book, o.port, o.port_file, o.cdn, true, o.ok)); }
+    if (!str_starts_with(a, "--") && o.book == "") { return parse(i + 1, with(o, a, o.port, o.port_file, o.cdn, o.public, o.ok)); }
+    return with(o, o.book, o.port, o.port_file, o.cdn, o.public, false);
+}
+
+// The static export: render every page to `<out>/<slug>/index.html` and
+// copy each asset. The Datastar client and the live search are left out —
+// a static host has no server to answer them.
+@requires(args, filesystem)
+Int cmd_export(Int argc) {
+    if (argc < 4) { eprintln(usage()); return 2; }
+    Str book = args.get(2);
+    Str out = args.get(3);
+    Ctx c0 = ctx_load(book);
+    Ctx c = Ctx { .b = c0.b, .docs = c0.docs, .pages = c0.pages, .mode = "export", .content = c0.content, .assets = c0.assets };
+    filesystem.create_dir(out);
+    List(Str) slugs = export_slugs(c);
+    Bool pages = write_pages(c, out, slugs, 0);
+    Bool assets = export_assets(c, out, str_split(c.assets, ","), 0);
+    // The theme and drawer script, so the static pages stay interactive.
+    filesystem.write_all(out + "/book.js", book_js());
+    // GitHub Pages skips directories beginning with `_`; `.nojekyll` opts
+    // the whole tree out of its Jekyll pass, so static hosts serve it all.
+    filesystem.write_all(out + "/.nojekyll", "");
+    println(f"resid-book: exported {slugs.len()} page(s) and assets to {out}");
+    return if (pages && assets) { 0 } else { 1 };
+}
+
+@requires(args, filesystem, network)
+Int main() {
+    if (args.count() > 1 && args.get(1) == "export") { return cmd_export(args.count()); }
+    Opts o = parse(1, Opts { .book = "", .port = 8080, .port_file = "", .cdn = false, .public = false, .ok = true });
+    if (!o.ok || o.book == "") { eprintln(usage()); return 2; }
+    Ctx c = ctx_load(o.book);
+    // Loopback by default; `--public` binds every interface, which is the
+    // one thing here that needs the full `network` grant.
+    Int lfd = if (o.public) { http_listen_at("0.0.0.0", o.port) } else { http_listen(o.port) };
+    if (lfd < 0) { eprintln(f"resid-book: cannot listen on port {o.port}"); return 1; }
+    Int port = http_bound_port(lfd);
+    if (o.port_file != "") { filesystem.write_all(o.port_file, f"{port}\n"); }
+    Str where = if (o.public) { "0.0.0.0" } else { "127.0.0.1" };
+    println(f"resid-book: http://{where}:{port}{c.b.base}/");
+    HttpOut(Int) closure(HttpRequest) h = lambda(r) { route(c, r) };
+    return if (http_stream_loop(lfd, h, http_limits(), 0) >= 0) { 0 } else { 1 };
+}

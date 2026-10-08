@@ -1,0 +1,33 @@
+[package]
+name = "resid-book"
+version = "0.1.0"
+root = "src/site.resid"
+description = "A book and documentation site generator and server for Resid, on resid-datastar"
+license = "MIT"
+repository = "https://github.com/larrydewey/resid-book"
+
+# The server reads the book's files and listens on loopback; the static
+# export writes the site it is asked for. Datastar's client bundle is
+# embedded in the binary. `network` in full, not `network(readonly)`, because
+# `--public` binds a port on every interface — the one write network allows.
+[capabilities]
+grant = ["args", "filesystem", "network"]
+
+# The Datastar SDK and its Markdown renderer, imported by package name
+# (`import "resid-datastar/datastar.resid";`), which the depmap resolves.
+#
+# `path` is the working copy beside this checkout; `version` is what a build
+# takes from the registry where that path is not there.
+[dependencies.resid-datastar]
+path = "../resid-datastar"
+version = "0.1.0"
+
+# The Datastar SDK imports these by package name, so the dependency map
+# needs them as well.
+[dependencies.resid-json]
+path = "../resid-json"
+version = "0.1.0"
+
+[dependencies.resid-serial]
+path = "../resid-serial"
+version = "0.1.0"

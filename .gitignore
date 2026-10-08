@@ -1,0 +1,5 @@
+deps.txt
+/resid-book
+*.resid-notes.cbor
+*.resid-prov
+target/

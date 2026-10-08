@@ -1,0 +1,248 @@
+// src/render_page.resid — a page rendered whole: sidebar, table of
+// contents, hero, pager and the document around them.
+//
+// It lives apart from the server because both the HTTP route and the
+// static export must produce the identical document; whichever calls
+// `page_document` gets the same bytes.
+
+import "resid-datastar/datastar.resid";
+import "search.resid";
+import "render.resid";
+import "theme.resid";
+
+pub Str title_of(Ctx c, Str slug) { return title_of_at(c.docs, slug, 0); }
+
+pub Str title_of_at(List(Doc) ds, Str slug, Int i) {
+    if (i >= ds.len()) { return slug; }
+    if (ds[i].slug == slug) { return ds[i].title; }
+    return title_of_at(ds, slug, i + 1);
+}
+
+pub Str desc_of(Ctx c, Str slug) { return desc_of_at(c.docs, slug, 0); }
+
+pub Str desc_of_at(List(Doc) ds, Str slug, Int i) {
+    if (i >= ds.len()) { return ""; }
+    if (ds[i].slug == slug) { return ds[i].description; }
+    return desc_of_at(ds, slug, i + 1);
+}
+
+// The part of a path inside the book's own directory, which is what an
+// edit link names (`src/content/docs/learn/values.md`, not the whole path).
+pub Str strip_book_dir(Str path, Str dir) {
+    Str pre = if (dir == "" || dir == ".") { "" } else { dir + "/" };
+    if (pre == "") { return path; }
+    if (str_starts_with(path, pre)) { return str_slice(path, str_len(pre), str_len(path)); }
+    return path;
+}
+
+pub Str h_esc(Str s) {
+    return str_replace(str_replace(str_replace(str_replace(str_replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&#39;");
+}
+
+// ─── Paths ──────────────────────────────────────────────────────────────
+
+pub Str strip_base(Str path, Str base) {
+    if (base == "") { return path; }
+    if (path == base) { return "/"; }
+    if (str_starts_with(path, base + "/")) { return str_slice(path, str_len(base), str_len(path)); }
+    return path;
+}
+
+pub Str path_slug(Str p) {
+    Int n = str_len(p);
+    Str s = if (str_starts_with(p, "/")) { str_slice(p, 1, n) } else { p };
+    Int m = str_len(s);
+    if (str_ends_with(s, "/") && m > 0) { return str_slice(s, 0, m - 1); }
+    return s;
+}
+
+pub Str asset_ext(Str name) {
+    if (str_ends_with(name, ".svg")) { return "image/svg+xml"; }
+    if (str_ends_with(name, ".png")) { return "image/png"; }
+    if (str_ends_with(name, ".css")) { return "text/css; charset=utf-8"; }
+    if (str_ends_with(name, ".ico")) { return "image/x-icon"; }
+    if (str_ends_with(name, ".js")) { return "text/javascript; charset=utf-8"; }
+    return "application/octet-stream";
+}
+
+// ─── Layout ─────────────────────────────────────────────────────────────
+
+pub Str page_link(Ctx c, Str cur, Str s) {
+    Str on = if (s == cur) { " class=\"on\"" } else { "" };
+    return "<a" + on + " href=\"" + book_url(s, c.b.base) + "\">" + h_esc(title_of(c, s)) + "</a>";
+}
+
+pub Str nav_links(Ctx c, Str slug, List(NavItem) items, Int i, StrBuf b) {
+    if (i >= items.len()) { return b.finish(); }
+    NavItem it = items[i];
+    return match it {
+        NGroup(l) => nav_links(c, slug, items, i + 1, b.push("<div class=\"grp\">" + h_esc(l) + "</div>")),
+        NPage(s) => nav_links(c, slug, items, i + 1, b.push(page_link(c, slug, s))),
+        NTopic(l, k) => nav_links(c, slug, items, i + 1, b.push("<div class=\"grp\">" + h_esc(l) + "</div>"))
+    };
+}
+
+pub Str topic_links(List(NavItem) nav, Int i, StrBuf b) {
+    if (i >= nav.len()) { return b.finish(); }
+    NavItem it = nav[i];
+    return match it {
+        NTopic(l, k) => topic_links(nav, i + 1, b.push("<a href=\"" + h_esc(k) + "/\">" + h_esc(l) + "</a>")),
+        _ => topic_links(nav, i + 1, b)
+    };
+}
+
+// The topic switcher: every topic as a link, the current one marked.
+pub Str topic_switcher(Ctx c, Str slug) {
+    List(TopicRef) ts = nav_topics(c.b.nav);
+    return "<nav class=\"switch\">" + topic_switcher_rows(c, ts, slug, 0, StrBuf()) + "</nav>";
+}
+
+pub Str topic_switcher_rows(Ctx c, List(TopicRef) ts, Str slug, Int i, StrBuf b) {
+    if (i >= ts.len()) { return b.finish(); }
+    TopicRef t = ts[i];
+    Str on = if (t.link == topic_link_of(c.b.nav, slug)) { " class=\"on\"" } else { "" };
+    Str row = "<a" + on + " href=\"" + book_url(t.link, c.b.base) + "\">" + h_esc(t.label) + "</a>";
+    return topic_switcher_rows(c, ts, slug, i + 1, b.push(row));
+}
+
+pub Str topic_link_of(List(NavItem) nav, Str slug) { return topic_link_start(nav, slug, 0, ""); }
+
+pub Str topic_link_start(List(NavItem) nav, Str slug, Int i, Str last) {
+    if (i >= nav.len()) { return last; }
+    NavItem it = nav[i];
+    return match it {
+        NTopic(l, k) => topic_link_start(nav, slug, i + 1, k),
+        NPage(s) => if (s == slug) { last } else { topic_link_start(nav, slug, i + 1, last) },
+        _ => topic_link_start(nav, slug, i + 1, last)
+    };
+}
+
+pub Str sidebar(Ctx c, Str slug) {
+    List(NavItem) slice = topic_slice(c.b.nav, slug);
+    Str switcher = topic_switcher(c, slug);
+    if (slice.len() == 0) {
+        return "<aside class=\"side\">" + switcher + "<div class=\"topic\">Contents</div>" + topic_links(c.b.nav, 0, StrBuf()) + "</aside>";
+    }
+    Str label = topic_label_of(c.b.nav, slug);
+    Str head = if (label == "") { "" } else { "<div class=\"topic\">" + h_esc(label) + "</div>" };
+    return "<aside class=\"side\">" + switcher + head + nav_links(c, slug, slice, 0, StrBuf()) + "</aside>";
+}
+
+pub List(Heading) empty_headings() { return []; }
+
+pub List(Heading) toc_of(PageMeta x) { return if (x.splash) { empty_headings() } else { page_headings(x.body) }; }
+
+pub Str toc_rows(List(Heading) hs, Int i, StrBuf b) {
+    if (i >= hs.len()) { return b.finish(); }
+    Heading x = hs[i];
+    Str cls = if (x.level == 3) { " class=\"l3\"" } else { "" };
+    return toc_rows(hs, i + 1, b.push("<a" + cls + " href=\"#" + h_esc(x.id) + "\">" + h_esc(x.text) + "</a>"));
+}
+
+pub Str toc_html(List(Heading) hs) {
+    if (hs.len() == 0) { return ""; }
+    return "<aside class=\"toc\"><h2>On this page</h2>" + toc_rows(hs, 0, StrBuf()) + "</aside>";
+}
+
+pub Str pager(Ctx c, Str slug) {
+    Str prev = nav_prev(c.pages, slug);
+    Str next = nav_next(c.pages, slug);
+    if (prev == "" && next == "") { return ""; }
+    Str p = if (prev == "") { "<span></span>" } else { "<a href=\"" + book_url(prev, c.b.base) + "\">&larr; " + h_esc(title_of(c, prev)) + "</a>" };
+    Str n = if (next == "") { "<span></span>" } else { "<a class=\"r\" href=\"" + book_url(next, c.b.base) + "\">" + h_esc(title_of(c, next)) + " &rarr;</a>" };
+    return "<nav class=\"pager\">" + p + n + "</nav>";
+}
+
+pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc) {
+    Str base = c.b.base;
+    Str client = if (c.mode == "export") { "" } else { ds_script_tag() };
+    Str repolink = if (c.b.repository == "") { "" } else { "<a class=\"repo\" href=\"" + h_esc(c.b.repository) + "\">GitHub</a>" };
+    return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        + "<title>" + h_esc(if (slug == "") { c.b.title } else { title_of(c, slug) + " - " + c.b.title }) + "</title>"
+        + "<meta name=\"description\" content=\"" + h_esc(desc_of(c, slug)) + "\">"
+        + "<style>" + theme_css() + "</style>" + book_script(c, base) + client
+        + "</head><body" + body_attrs(c) + ">"
+        + backdrop(c)
+        + "<header class=\"top\">"
+        + hamburger(c)
+        + "<a class=\"brand\" href=\"" + base + "/\"><img src=\"" + base + "/mascot.svg\" alt=\"\"><span>" + h_esc(c.b.title) + "</span></a>"
+        + "<span class=\"grow\"></span>"
+        + search_box(c, base)
+        + repolink
+        + "<button class=\"icon\" id=\"theme-toggle\" aria-label=\"Theme\">&#9681;</button>"
+        + "</header>"
+        + "<div class=\"shell\">" + sidebar(c, slug) + "<main><div class=\"main\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
+        + "</body></html>";
+}
+
+// The theme and drawer script. When serving, Datastar drives the drawer
+// and this file only the theme; a static export has no Datastar, so the
+// same file does both.
+pub Str book_script(Ctx c, Str base) {
+    return "<script src=\"" + base + "/book.js\" defer></script>";
+}
+
+pub Str hamburger(Ctx c) {
+    Str on = if (c.mode == "export") { "" } else { " data-on:click=\"$nav = $nav == 'open' ? '' : 'open'\"" };
+    return "<button class=\"hamburger\" aria-label=\"Menu\" id=\"nav-toggle\"" + on + ">&#9776;</button>";
+}
+
+pub Str backdrop(Ctx c) {
+    Str on = if (c.mode == "export") { "" } else { " data-on:click=\"$nav=''\"" };
+    return "<div class=\"backdrop\" id=\"nav-backdrop\"" + on + "></div>";
+}
+
+pub Str body_attrs(Ctx c) {
+    if (c.mode == "export") { return ""; }
+    return " data-signals=\"{nav:''}\" data-attr:data-nav=\"$nav\"";
+}
+
+pub Str search_box(Ctx c, Str base) {
+    if (c.mode == "export") { return ""; }
+    return "<div class=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search\" data-bind:q data-on:input__debounce.200ms=\"@get('"
+        + base + "/ui/search')\"><div id=\"search-results\" class=\"results\" data-show=\"false\"></div></div>";
+}
+
+// The whole document for a page: what the server would answer with.
+@requires(filesystem(readonly))
+pub Str page_document(Ctx c, PageMeta x) {
+    return layout(c, x.slug, page_main(c, x), toc_of(x));
+}
+
+pub HttpReply html_reply(Str body) { return html_status(200, body); }
+
+pub HttpReply html_status(Int status, Str body) {
+    Str csp = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+    HttpReply r = http_reply_text(status, "text/html; charset=utf-8", body);
+    return http_with_header(http_with_header(http_with_header(r, "Cache-Control", "no-cache"), "Content-Security-Policy", csp), "X-Content-Type-Options", "nosniff");
+}
+
+// ─── Page body ──────────────────────────────────────────────────────────
+
+pub Str hero_actions(List(HeroAction) as, Int i, StrBuf b) {
+    if (i >= as.len()) { return b.finish(); }
+    HeroAction a = as[i];
+    Str cls = if (a.minimal) { " class=\"min\"" } else { "" };
+    return hero_actions(as, i + 1, b.push("<a" + cls + " href=\"" + h_esc(a.link) + "\">" + h_esc(a.text) + "</a>"));
+}
+
+pub Str hero(PageMeta m) {
+    Str acts = hero_actions(m.actions, 0, StrBuf());
+    Str img = if (m.image == "") { "" } else { m.image };
+    return "<div class=\"hero\">" + img + "<div>"
+        + "<h1>" + h_esc(m.title) + "</h1>"
+        + (if (m.tagline != "") { "<p class=\"tag\">" + h_esc(m.tagline) + "</p>" } else { "" })
+        + (if (acts == "") { "" } else { "<div class=\"acts\">" + acts + "</div>" }) + "</div></div>";
+}
+
+@requires(filesystem(readonly))
+pub Str page_main(Ctx c, PageMeta m) {
+    Str body = body_html(m.body, c.b.base + "/");
+    if (m.splash) { return hero(m) + body; }
+    Str f = if (c.b.edit_base == "") { "" } else { page_file(c.content, m.slug) };
+    Str edit = if (f == "") { "" } else { "<p class=\"edit\"><a href=\"" + h_esc(c.b.edit_base + strip_book_dir(f, c.b.dir)) + "\">Edit this page</a></p>" };
+    return "<h1>" + h_esc(m.title) + "</h1>"
+        + (if (m.description != "") { "<p class=\"lead\">" + h_esc(m.description) + "</p>" } else { "" })
+        + body + edit + pager(c, m.slug);
+}

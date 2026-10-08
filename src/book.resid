@@ -1,0 +1,189 @@
+// src/book.resid — the book model and its `book.toml`.
+//
+// `book.toml` is a small TOML: a `[book]` table of strings, and a flat
+// `nav` array whose entries name the shape of the book. Each entry is
+//     "topic|Label|link"    start a sidebar topic
+//     "group|Label"         a collapsible group inside it
+//     "page|slug"           a page, labelled by its own frontmatter title
+// Because the array is flat, the reader is a simple line scanner and the
+// writer is a human with a text editor.
+
+// The whole book: its strings, and the flat nav that names the shape.
+pub type Book = {
+    Str title; Str tagline; Str base; Str content; Str assets; Str edit_base; Str repository;
+    Str dir;
+    List(NavItem) nav;
+};
+
+pub type NavItem = NTopic(Str, Str) | NGroup(Str) | NPage(Str);
+
+pub type TopicRef = { Str label; Str link; };
+
+@requires(filesystem(readonly))
+pub Book book_read(Str path) {
+    Str text = filesystem.read_all(path);
+    return Book {
+        .dir = parent_dir(path),
+        .title = bf(text, "title"),
+        .tagline = bf(text, "tagline"),
+        .base = bf(text, "base"),
+        .content = bf(text, "content"),
+        .assets = bf(text, "assets"),
+        .edit_base = bf(text, "edit_base"),
+        .repository = bf(text, "repository"),
+        .nav = nav_parse(nav_strings(text))
+    };
+}
+
+// The directory holding the book.toml, so `content` and `assets` are
+// read beside it however the server was started.
+pub Str parent_dir(Str path) { return parent_dir_at(path, str_len(path) - 1); }
+
+pub Str parent_dir_at(Str path, Int i) {
+    if (i < 0) { return "."; }
+    if (str_char_at(path, i) == 47) { return if (i == 0) { "/" } else { str_slice(path, 0, i) }; }
+    return parent_dir_at(path, i - 1);
+}
+
+// `content` and `assets` are read beside the book's own directory unless
+// they are absolute.
+pub Str book_path(Str dir, Str rel) {
+    if (rel == "") { return ""; }
+    if (str_starts_with(rel, "/")) { return rel; }
+    if (dir == "" || dir == ".") { return rel; }
+    return dir + "/" + rel;
+}
+
+// The value of `key = "value"` anywhere in the text, or "".
+Str bf(Str text, Str key) {
+    List(Str) ls = str_split(text, "\n");
+    return bf_at(ls, 0, key + " = \"");
+}
+
+Str bf_at(List(Str) ls, Int i, Str prefix) {
+    if (i >= ls.len()) { return ""; }
+    Str l = str_trim(ls[i]);
+    if (str_starts_with(l, prefix)) {
+        Int a = str_len(prefix);
+        Int end = str_index_of(str_slice(l, a, str_len(l)), "\"", 0);
+        if (end < 0) { return ""; }
+        return str_slice(l, a, a + end);
+    }
+    return bf_at(ls, i + 1, prefix);
+}
+
+// The quoted strings of the `nav = [ ... ]` array, in order.
+Str nav_region(Str text) {
+    Int p = str_index_of(text, "nav = [", 0);
+    if (p < 0) { return ""; }
+    Str rest = str_slice(text, p + 7, str_len(text));
+    Int q = str_index_of(rest, "]", 0);
+    if (q < 0) { return rest; }
+    return str_slice(rest, 0, q);
+}
+
+List(Str) nav_strings(Str text) { return quoted(nav_region(text), 0, ListBuf()); }
+
+// Every `"..."` in `s`. A backslash skips the next character, so a
+// writer may escape a quote inside a nav entry.
+List(Str) quoted(Str s, Int i, ListBuf(Str) acc) {
+    if (i >= str_len(s)) { return acc.finish(); }
+    if (str_char_at(s, i) != 34) { return quoted(s, i + 1, acc); }
+    return quoted_close(s, i + 1, i + 1, acc);
+}
+
+List(Str) quoted_close(Str s, Int i, Int start, ListBuf(Str) acc) {
+    if (i >= str_len(s)) { return acc.finish(); }
+    Int c = str_char_at(s, i);
+    if (c == 92) { return quoted_close(s, i + 2, start, acc); }
+    if (c == 34) { return quoted(s, i + 1, acc.push(str_slice(s, start, i))); }
+    return quoted_close(s, i + 1, start, acc);
+}
+
+List(NavItem) nav_parse(List(Str) ss) { return nav_parse_at(ss, 0, ListBuf()); }
+
+List(NavItem) nav_parse_at(List(Str) ss, Int i, ListBuf(NavItem) acc) {
+    if (i >= ss.len()) { return acc.finish(); }
+    List(Str) p = str_split(ss[i], "|");
+    if (p[0] == "topic" && p.len() >= 3) { return nav_parse_at(ss, i + 1, acc.push(NTopic(p[1], p[2]))); }
+    if (p[0] == "group" && p.len() >= 2) { return nav_parse_at(ss, i + 1, acc.push(NGroup(p[1]))); }
+    if (p[0] == "page" && p.len() >= 2) { return nav_parse_at(ss, i + 1, acc.push(NPage(p[1]))); }
+    return nav_parse_at(ss, i + 1, acc);
+}
+
+// ─── Queries over the nav ───────────────────────────────────────────────
+
+pub List(Str) nav_pages(List(NavItem) nav) { return nav_pages_at(nav, 0, ListBuf()); }
+
+List(Str) nav_pages_at(List(NavItem) nav, Int i, ListBuf(Str) acc) {
+    if (i >= nav.len()) { return acc.finish(); }
+    NavItem it = nav[i];
+    return match it {
+        NPage(s) => nav_pages_at(nav, i + 1, acc.push(s)),
+        _ => nav_pages_at(nav, i + 1, acc)
+    };
+}
+
+// The items (groups and pages) of the topic `slug` belongs to, from just
+// after its `NTopic` up to the next one. The sidebar draws exactly this.
+pub List(NavItem) topic_slice(List(NavItem) nav, Str slug) {
+    Int start = topic_start(nav, slug, 0, -1);
+    if (start < 0) { return []; }
+    return slice_until_topic(nav, start + 1, ListBuf());
+}
+
+Int topic_start(List(NavItem) nav, Str slug, Int i, Int last) {
+    if (i >= nav.len()) { return last; }
+    NavItem it = nav[i];
+    return match it {
+        NTopic(l, k) => topic_start(nav, slug, i + 1, i),
+        NPage(s) => if (s == slug) { last } else { topic_start(nav, slug, i + 1, last) },
+        _ => topic_start(nav, slug, i + 1, last)
+    };
+}
+
+List(NavItem) slice_until_topic(List(NavItem) nav, Int i, ListBuf(NavItem) acc) {
+    if (i >= nav.len()) { return acc.finish(); }
+    NavItem it = nav[i];
+    return match it {
+        NTopic(l, k) => acc.finish(),
+        _ => slice_until_topic(nav, i + 1, acc.push(it))
+    };
+}
+
+// The topic label `slug` belongs to, or "" when the book has no topics.
+pub Str topic_label_of(List(NavItem) nav, Str slug) {
+    Int start = topic_start(nav, slug, 0, -1);
+    if (start < 0) { return ""; }
+    NavItem it = nav[start];
+    return match it { NTopic(l, k) => l, _ => "" };
+}
+
+// Every topic, as (label, link) pairs, for the topic switcher.
+pub List(TopicRef) nav_topics(List(NavItem) nav) { return nav_topics_at(nav, 0, ListBuf()); }
+
+List(TopicRef) nav_topics_at(List(NavItem) nav, Int i, ListBuf(TopicRef) acc) {
+    if (i >= nav.len()) { return acc.finish(); }
+    NavItem it = nav[i];
+    return match it {
+        NTopic(l, k) => nav_topics_at(nav, i + 1, acc.push(TopicRef { .label = l, .link = k })),
+        _ => nav_topics_at(nav, i + 1, acc)
+    };
+}
+
+// prev/next within the whole book's page order.
+pub Str nav_prev(List(Str) ps, Str slug) { return nav_prev_at(ps, 0, slug); }
+
+Str nav_prev_at(List(Str) ps, Int i, Str slug) {
+    if (i + 1 >= ps.len()) { return ""; }
+    if (ps[i + 1] == slug) { return ps[i]; }
+    return nav_prev_at(ps, i + 1, slug);
+}
+
+pub Str nav_next(List(Str) ps, Str slug) { return nav_next_at(ps, 0, slug); }
+
+Str nav_next_at(List(Str) ps, Int i, Str slug) {
+    if (i >= ps.len()) { return ""; }
+    if (ps[i] == slug) { return if (i + 1 < ps.len()) { ps[i + 1] } else { "" }; }
+    return nav_next_at(ps, i + 1, slug);
+}

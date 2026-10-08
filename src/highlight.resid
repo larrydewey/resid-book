@@ -1,0 +1,136 @@
+// src/highlight.resid — a small, dependency-free syntax highlighter.
+//
+// It is not Shiki; it is a per-language scanner that tags comments,
+// strings, numbers, keywords and type-like names. That is enough for the
+// documentation's code fences, and it keeps the server free of Node.
+
+pub Str hl(Str lang, Str code) {
+    if (lang == "" || lang == "text" || lang == "txt" || lang == "output") { return h_esc(code); }
+    return hl_at(lang, code, 0, StrBuf());
+}
+
+Str hl_at(Str lang, Str code, Int i, StrBuf b) {
+    if (i >= str_len(code)) { return b.finish(); }
+    Int c = str_char_at(code, i);
+    // Line comment.
+    if (c == 47 && str_char_before(code, i + 1) == 47 && has_line_comment(lang)) {
+        Int e = str_index_of(str_slice(code, i, str_len(code)), "\n", 0);
+        Int end = if (e < 0) { str_len(code) } else { i + e };
+        return hl_at(lang, code, end, b.push("<span class=\"c\">").push(h_esc(str_slice(code, i, end))).push("</span>"));
+    }
+    if (c == 35 && hash_comment(lang)) {
+        Int e = str_index_of(str_slice(code, i, str_len(code)), "\n", 0);
+        Int end = if (e < 0) { str_len(code) } else { i + e };
+        return hl_at(lang, code, end, b.push("<span class=\"c\">").push(h_esc(str_slice(code, i, end))).push("</span>"));
+    }
+    if (c == 34) {
+        return hl_string(lang, code, i, b, c);
+    }
+    if (c == 39 && quotable_apostrophe(lang)) { return hl_string(lang, code, i, b, c); }
+    if (c == 96 && backtick(lang)) { return hl_string(lang, code, i, b, c); }
+    if (c >= 48 && c <= 57) { return hl_number(lang, code, i, b); }
+    if (c == 64) { return hl_at_word(lang, code, i + 1, b, "@"); }
+    if (is_ident_start(c)) { return hl_word(lang, code, i, b); }
+    return hl_at(lang, code, i + 1, b.push(h_esc(str_slice(code, i, i + 1))));
+}
+
+Str hl_string(Str lang, Str code, Int i, StrBuf b, Int q) {
+    Int end = hl_str_end(code, i + 1, q, false);
+    return hl_at(lang, code, end, b.push("<span class=\"s\">").push(h_esc(str_slice(code, i, end))).push("</span>"));
+}
+
+Int hl_str_end(Str code, Int i, Int q, Bool esc) {
+    if (i >= str_len(code)) { return i; }
+    Int c = str_char_at(code, i);
+    if (esc) { return hl_str_end(code, i + 1, q, false); }
+    if (c == 92) { return hl_str_end(code, i + 1, q, true); }
+    if (c == q) { return i + 1; }
+    return hl_str_end(code, i + 1, q, false);
+}
+
+Str hl_number(Str lang, Str code, Int i, StrBuf b) {
+    Int end = hl_num_end(code, i + 1);
+    return hl_at(lang, code, end, b.push("<span class=\"n\">").push(h_esc(str_slice(code, i, end))).push("</span>"));
+}
+
+Int hl_num_end(Str code, Int i) {
+    if (i >= str_len(code)) { return i; }
+    Int c = str_char_at(code, i);
+    Bool more = (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 46 || c == 95 || c == 120;
+    return if (more) { hl_num_end(code, i + 1) } else { i };
+}
+
+Str hl_word(Str lang, Str code, Int i, StrBuf b) {
+    Int end = hl_word_end(code, i + 1);
+    Str w = str_slice(code, i, end);
+    Str cls = word_class(lang, w);
+    if (cls == "") { return hl_at(lang, code, end, b.push(h_esc(w))); }
+    return hl_at(lang, code, end, b.push("<span class=\"").push(cls).push("\">").push(h_esc(w)).push("</span>"));
+}
+
+Str hl_at_word(Str lang, Str code, Int i, StrBuf b, Str pre) {
+    Int end = hl_word_end(code, i);
+    return hl_at(lang, code, end, b.push("<span class=\"k\">").push(h_esc(pre + str_slice(code, i, end))).push("</span>"));
+}
+
+Int hl_word_end(Str code, Int i) {
+    if (i >= str_len(code)) { return i; }
+    return if (is_ident_char(str_char_at(code, i))) { hl_word_end(code, i + 1) } else { i };
+}
+
+Bool is_ident_start(Int c) { return c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95; }
+Bool is_ident_char(Int c) { return is_ident_start(c) || (c >= 48 && c <= 57); }
+
+Str word_class(Str lang, Str w) {
+    if (is_keyword(lang, w)) { return "k"; }
+    if (is_constant(w)) { return "n"; }
+    Int c = str_char_at(w, 0);
+    if (c >= 65 && c <= 90) { return "t"; }
+    return "";
+}
+
+Bool is_constant(Str w) { return w == "true" || w == "false" || w == "null" || w == "None" || w == "Ok" || w == "Err"; }
+
+Bool is_keyword(Str lang, Str w) {
+    if (lang == "sh" || lang == "bash") { return sh_kw(w); }
+    if (lang == "json") { return false; }
+    if (lang == "toml") { return false; }
+    return resid_kw(w);
+}
+
+Bool resid_kw(Str w) {
+    List(Str) ks = ["import", "pub", "type", "behavior", "as", "with", "rt", "match", "if", "else", "while", "for", "return", "break", "continue", "spawn", "known", "rt_known", "comptime_print", "todo", "unimplemented", "where", "assert", "rt_assert", "in", "test", "sandbox", "constraint", "let", "fn", "lambda"];
+    return ks.contains(w);
+}
+
+Bool sh_kw(Str w) {
+    List(Str) ks = ["if", "then", "else", "fi", "for", "in", "do", "done", "while", "case", "esac", "function", "return", "local", "export", "echo", "cd", "set"];
+    return ks.contains(w);
+}
+
+Bool has_line_comment(Str lang) {
+    List(Str) ls = ["resid", "rust", "rs", "c", "cpp", "js", "ts", "go", "java", "json"];
+    return ls.contains(lang);
+}
+
+Bool hash_comment(Str lang) {
+    List(Str) ls = ["sh", "bash", "py", "python", "toml", "yaml", "yml", "rb", "make"];
+    return ls.contains(lang);
+}
+
+Bool quotable_apostrophe(Str lang) {
+    List(Str) ls = ["js", "ts", "py", "python", "sh", "bash", "rb"];
+    return ls.contains(lang);
+}
+
+Bool backtick(Str lang) {
+    List(Str) ls = ["js", "ts", "sh", "bash"];
+    return ls.contains(lang);
+}
+
+Str h_esc(Str s) {
+    return str_replace(str_replace(str_replace(str_replace(str_replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&#39;");
+}
+
+// The char at `i`, or -1 (used for one-char lookahead without a slice).
+Int str_char_before(Str s, Int i) { return if (i < str_len(s)) { str_char_at(s, i) } else { -1 }; }

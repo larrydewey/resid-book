@@ -1,0 +1,161 @@
+// src/page.resid — one page of a book: where its file is, its frontmatter,
+// and the headings its table of contents lists.
+
+pub type PageMeta = {
+    Str slug; Str title; Str description; Str tagline; Bool splash;
+    Str image; List(HeroAction) actions; Str body;
+};
+
+pub type HeroAction = { Str text; Str link; Bool minimal; };
+
+pub type Heading = { Int level; Str id; Str text; };
+
+@requires(filesystem(readonly))
+pub Option(PageMeta) page_load(Str content, Str slug) {
+    Str f = page_file(content, slug);
+    if (f == "") { return None; }
+    return Some(page_parse(slug, filesystem.read_all(f)));
+}
+
+// `slug` ("", "learn", "learn/values") to a file beside the content root.
+@requires(filesystem(readonly))
+pub Str page_file(Str content, Str slug) {
+    Str dir = if (slug == "") { content } else { content + "/" + slug };
+    Str direct = if (slug == "") { "" } else { content + "/" + slug };
+    if (slug != "" && filesystem.exists(direct + ".md")) { return direct + ".md"; }
+    if (slug != "" && filesystem.exists(direct + ".mdx")) { return direct + ".mdx"; }
+    if (filesystem.exists(dir + "/index.md")) { return dir + "/index.md"; }
+    if (filesystem.exists(dir + "/index.mdx")) { return dir + "/index.mdx"; }
+    return "";
+}
+
+// Frontmatter between the first `---` and the next, then the Markdown body.
+pub PageMeta page_parse(Str slug, Str text) {
+    List(Str) ls = str_split(str_replace(text, "\r\n", "\n"), "\n");
+    if (ls.len() > 0 && str_trim(ls[0]) == "---") {
+        Int end = fm_end(ls, 1);
+        if (end >= 0) {
+            List(Str) fm = ls[1..end];
+            return PageMeta {
+                .slug = slug,
+                .title = fm_field(fm, "title"),
+                .description = fm_field(fm, "description"),
+                .tagline = fm_tagline(fm),
+                .splash = fm_field(fm, "template") == "splash",
+                .image = fm_image(fm),
+                .actions = fm_actions(fm, 0, ListBuf()),
+                .body = str_join(ls[end + 1..ls.len()], "\n")
+            };
+        }
+    }
+    return PageMeta { .slug = slug, .title = slug, .description = "", .tagline = "", .splash = false, .image = "", .actions = [], .body = text };
+}
+
+Int fm_end(List(Str) ls, Int i) {
+    if (i >= ls.len()) { return -1; }
+    if (str_trim(ls[i]) == "---") { return i; }
+    return fm_end(ls, i + 1);
+}
+
+Str fm_field(List(Str) ls, Str key) {
+    return fm_field_at(ls, 0, key + ":");
+}
+
+Str fm_field_at(List(Str) ls, Int i, Str key) {
+    if (i >= ls.len()) { return ""; }
+    Str s = str_trim(ls[i]);
+    if (str_starts_with(s, key)) { return str_trim(str_slice(s, str_len(key), str_len(s))); }
+    return fm_field_at(ls, i + 1, key);
+}
+
+// `hero:\n  tagline: ...` — the line naming `tagline`, one level in.
+Str fm_tagline(List(Str) ls) { return fm_tagline_at(ls, 0, false); }
+
+Str fm_tagline_at(List(Str) ls, Int i, Bool in_hero) {
+    if (i >= ls.len()) { return ""; }
+    Str s = str_trim(ls[i]);
+    if (s == "hero:") { return fm_tagline_at(ls, i + 1, true); }
+    if (in_hero && str_starts_with(s, "tagline:")) { return str_trim(str_slice(s, 8, str_len(s))); }
+    return fm_tagline_at(ls, i + 1, in_hero);
+}
+
+// `hero:\n  image:\n    html: '<img ... />'` — the hero's picture, kept
+// as the markup the author wrote.
+Str fm_image(List(Str) ls) { return fm_image_at(ls, 0, false); }
+
+Str fm_image_at(List(Str) ls, Int i, Bool in_hero) {
+    if (i >= ls.len()) { return ""; }
+    Str s = str_trim(ls[i]);
+    if (s == "hero:") { return fm_image_at(ls, i + 1, true); }
+    if (in_hero && str_starts_with(s, "html:")) { return str_trim(str_slice(s, 5, str_len(s))); }
+    return fm_image_at(ls, i + 1, in_hero);
+}
+
+// The hero actions: `- text: X` then `link: Y`; `variant: minimal` marks
+// the secondary ones.
+List(HeroAction) fm_actions(List(Str) ls, Int i, ListBuf(HeroAction) acc) {
+    if (i >= ls.len()) { return acc.finish(); }
+    Str s = str_trim(ls[i]);
+    if (str_starts_with(s, "- text:")) {
+        Str text = str_trim(str_slice(s, 7, str_len(s)));
+        Str link = fm_next_key(ls, i + 1, "link:");
+        Bool minimal = fm_next_key(ls, i + 1, "variant:") == "minimal";
+        return fm_actions(ls, i + 1, acc.push(HeroAction { .text = text, .link = link, .minimal = minimal }));
+    }
+    return fm_actions(ls, i + 1, acc);
+}
+
+// The next `key: value` at or after `i` (stopping at the next `- ` entry).
+Str fm_next_key(List(Str) ls, Int i, Str key) {
+    if (i >= ls.len()) { return ""; }
+    Str s = str_trim(ls[i]);
+    if (str_starts_with(s, "- ")) { return ""; }
+    if (str_starts_with(s, key)) { return str_trim(str_slice(s, str_len(key), str_len(s))); }
+    return fm_next_key(ls, i + 1, key);
+}
+
+// ─── Headings for the table of contents ─────────────────────────────────
+
+pub List(Heading) page_headings(Str body) {
+    List(Str) ls = str_split(body, "\n");
+    return page_headings_at(ls, 0, false, ListBuf());
+}
+
+List(Heading) page_headings_at(List(Str) ls, Int i, Bool in_fence, ListBuf(Heading) acc) {
+    if (i >= ls.len()) { return acc.finish(); }
+    Str t = str_trim(ls[i]);
+    if (str_starts_with(t, "```")) {
+        return page_headings_at(ls, i + 1, !in_fence, acc);
+    }
+    if (in_fence) { return page_headings_at(ls, i + 1, in_fence, acc); }
+    Int lvl = heading_level(t);
+    if (lvl >= 2 && lvl <= 3) {
+        Str text = str_trim(str_slice(t, lvl, str_len(t)));
+        return page_headings_at(ls, i + 1, in_fence, acc.push(Heading { .level = lvl, .id = slug_of(text), .text = strip_marks(text) }));
+    }
+    return page_headings_at(ls, i + 1, in_fence, acc);
+}
+
+Int heading_level(Str t) {
+    if (str_starts_with(t, "### ")) { return 3; }
+    if (str_starts_with(t, "## ")) { return 2; }
+    if (str_starts_with(t, "# ")) { return 1; }
+    return 0;
+}
+
+// `List(Int)` -> `listint`, matching ui/markdown.resid's heading anchors.
+pub Str slug_of(Str s) { return slug_at(str_to_lower(s), 0, StrBuf()); }
+
+Str slug_at(Str s, Int i, StrBuf b) {
+    if (i >= str_len(s)) { return b.finish(); }
+    Int c = str_char_at(s, i);
+    Bool keep = (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || c == 45 || c == 95;
+    StrBuf next = if (keep) { b.push_char(c) } else { if (c == 32) { b.push("-") } else { b } };
+    return slug_at(s, i + 1, next);
+}
+
+// Drop `foo`, backticks and link syntax from a heading's text.
+Str strip_marks(Str s) {
+    if (str_starts_with(s, "`") && str_ends_with(s, "`")) { return str_slice(s, 1, str_len(s) - 1); }
+    return s;
+}

@@ -1,0 +1,99 @@
+// src/render.resid — a page body to HTML.
+//
+// Markdown is rendered by resid-datastar's `md_html`; here we handle the
+// parts a book adds on top of Markdown: fenced code (highlighted), the
+// few Starlight MDX components the Resid docs use (CardGrid, Card,
+// LinkCard), and trusted raw HTML like `<img>`. A segment is either
+// Markdown (through `md_html`) or raw HTML (passed through), and the two
+// are never mixed, so a fenced block or a component is never escaped.
+
+import "resid-datastar/markdown.resid";
+import "highlight.resid";
+
+pub Str body_html(Str body, Str base) {
+    List(Str) ls = str_split(str_replace(body, "\r\n", "\n"), "\n");
+    return bh(ls, 0, base, StrBuf(), []);
+}
+
+Str flush(StrBuf out, List(Str) md, Str base) {
+    if (md.len() == 0) { return out.finish(); }
+    return out.push(md_html(str_join(md, "\n"), base)).finish();
+}
+
+Str bh(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md) {
+    if (i >= ls.len()) { return flush(out, md, base); }
+    Str t = str_trim(ls[i]);
+    // Fenced code.
+    if (str_starts_with(t, "```")) {
+        StrBuf flushed = if (md.len() == 0) { out } else { out.push(md_html(str_join(md, "\n"), base)) };
+        Int end = fence_end(ls, i + 1);
+        return bh(ls, end + 1, base, flushed.push(code_block(t, ls[i + 1..end])), []);
+    }
+    if (str_starts_with(t, "import ")) { return bh(ls, i + 1, base, out, md); }
+    if (t == "<CardGrid>") { return tag_raw(ls, i, base, out, md, "<div class=\"cards\">"); }
+    if (t == "</CardGrid>") { return tag_raw(ls, i, base, out, md, "</div>"); }
+    if (str_starts_with(t, "<Card ") || t == "<Card>") {
+        return tag_raw(ls, i, base, out, md, card_open(t));
+    }
+    if (t == "</Card>") { return tag_raw(ls, i, base, out, md, "</div>"); }
+    if (str_starts_with(t, "<LinkCard")) { return tag_raw(ls, i, base, out, md, link_card(t)); }
+    if (str_starts_with(t, "<img ") || str_starts_with(t, "<img/")) { return tag_raw(ls, i, base, out, md, t); }
+    return bh(ls, i + 1, base, out, md.concat([ls[i]]));
+}
+
+// Emit raw HTML after flushing any pending Markdown.
+Str tag_raw(List(Str) ls, Int i, Str base, StrBuf out, List(Str) md, Str raw) {
+    StrBuf flushed = if (md.len() == 0) { out } else { out.push(md_html(str_join(md, "\n"), base)) };
+    return bh(ls, i + 1, base, flushed.push(raw), []);
+}
+
+Int fence_end(List(Str) ls, Int i) {
+    if (i >= ls.len()) { return i; }
+    if (str_starts_with(str_trim(ls[i]), "```")) { return i; }
+    return fence_end(ls, i + 1);
+}
+
+Str code_block(Str spec, List(Str) lines) {
+    Str rest = str_slice(spec, 3, str_len(spec));
+    Int sp = str_index_of(rest, " ", 0);
+    Str lang = if (sp < 0) { rest } else { str_slice(rest, 0, sp) };
+    Str meta = if (sp < 0) { "" } else { rest };
+    Str title = attr_in(meta, "title");
+    Str code = str_join(lines, "\n");
+    Str langn = if (lang == "") { "text" } else { lang };
+    Str inner = hl(langn, code);
+    Str pre = "<pre class=\"language-" + esc_attr(langn) + "\"><code>" + inner + "</code></pre>";
+    if (title != "") { return "<figure class=\"code\"><figcaption>" + h_esc(title) + "</figcaption>" + pre + "</figure>"; }
+    return pre;
+}
+
+Str card_open(Str t) {
+    Str title = attr_in(t, "title");
+    if (title == "") { return "<div class=\"card\">"; }
+    return "<div class=\"card\"><h3>" + h_esc(title) + "</h3>";
+}
+
+Str link_card(Str t) {
+    Str title = attr_in(t, "title");
+    Str href = attr_in(t, "href");
+    Str desc = attr_in(t, "description");
+    return "<a class=\"card linkcard\" href=\"" + esc_attr(href) + "\"><strong>" + h_esc(title) + "</strong><span>" + h_esc(desc) + "</span></a>";
+}
+
+// The value of `name="..."` inside a tag, or "".
+Str attr_in(Str tag, Str name) {
+    Str needle = name + "=\"";
+    Int p = str_index_of(tag, needle, 0);
+    if (p < 0) { return ""; }
+    Int a = p + str_len(needle);
+    Str rest = str_slice(tag, a, str_len(tag));
+    Int e = str_index_of(rest, "\"", 0);
+    if (e < 0) { return ""; }
+    return str_slice(tag, a, a + e);
+}
+
+Str h_esc(Str s) {
+    return str_replace(str_replace(str_replace(str_replace(str_replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&#39;");
+}
+
+Str esc_attr(Str s) { return h_esc(s); }

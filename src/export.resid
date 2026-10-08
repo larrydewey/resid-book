@@ -1,0 +1,106 @@
+// src/export.resid — a book as static files.
+//
+// The same code path that answers an HTTP request renders a file, so the
+// export cannot drift from the server: it walks the book's pages and writes
+// exactly what a browser would have been served.
+// `<out>/<slug>/index.html` for each page, the home page at `<out>/index.html`.
+// In `export` mode the live search endpoint and the client bundle are left
+// out, because on a static host there is no server to answer either; the
+// `mode` lives in Ctx, so one renderer serves both.
+
+import "resid-datastar/datastar.resid";
+import "page.resid";
+import "render_page.resid";
+
+// Where a page's file goes: the home page at `<out>/index.html`, every
+// other page at `<out>/<slug>/index.html`.
+Str page_file_out(Str out, Str slug) {
+    if (slug == "") { return out + "/index.html"; }
+    return out + "/" + slug + "/index.html";
+}
+
+// `dirname`: everything before the last `/`, or "." when there is none.
+Str dir_of(Str path) { return last_slash_dir(path, str_len(path) - 1); }
+
+Str last_slash_dir(Str path, Int i) {
+    if (i < 0) { return "."; }
+    if (str_char_at(path, i) == 47) { return if (i == 0) { "/" } else { str_slice(path, 0, i) }; }
+    return last_slash_dir(path, i - 1);
+}
+
+@requires(filesystem)
+pub Bool write_page(Ctx c, Str out, Str slug) {
+    Option(PageMeta) m = page_load(c.content, slug);
+    PageMeta p = m else { empty_page() };
+    Bool found = m_is_some(m);
+    if (!found) { return true; }
+    Str path = page_file_out(out, slug);
+    filesystem.create_dir(dir_of(path));
+    filesystem.write_all(path, page_document(c, p));
+    return true;
+}
+
+Bool m_is_some(Option(PageMeta) m) {
+    Bool yes = match m { Some(x) => true, None => false };
+    return yes;
+}
+
+PageMeta empty_page() { return page_parse("", ""); }
+
+// Every page in the book's nav, plus the home page, in one pass.
+@requires(filesystem)
+pub Bool write_pages(Ctx c, Str out, List(Str) slugs, Int i) {
+    if (i >= slugs.len()) { return true; }
+    Bool a = write_page(c, out, slugs[i]);
+    Bool b = write_pages(c, out, slugs, i + 1);
+    return a && b;
+}
+
+// One asset file, copied as bytes.
+@requires(filesystem)
+Bool copy_asset(Str out, Str name, Str dir) {
+    Str src = if (dir == "") { name } else { dir + "/" + name };
+    if (!filesystem.exists(src)) { return true; }
+    Str path = out + "/" + name;
+    filesystem.create_dir(dir_of(path));
+    filesystem.write_bytes(path, filesystem.read_bytes(src));
+    return true;
+}
+
+// Each asset directory (from the comma-separated `assets`), copied whole.
+@requires(filesystem)
+pub Bool export_assets(Ctx c, Str out, List(Str) dirs, Int i) {
+    if (i >= dirs.len()) { return true; }
+    Str dir = str_trim(dirs[i]);
+    Bool here = if (dir == "" || !filesystem.is_dir(dir)) { true } else { export_dir(c, out, dir, dir, "") };
+    Bool rest = export_assets(c, out, dirs, i + 1);
+    return here && rest;
+}
+
+// `rel` is the destination-relative prefix; `src` the directory on disk.
+@requires(filesystem)
+pub Bool export_dir(Ctx c, Str out, Str src, Str root, Str rel) {
+    if (rel != "") { filesystem.create_dir(out + "/" + rel); }
+    return export_entries(c, out, src, root, rel, sort(filesystem.list_dir(src)), 0);
+}
+
+@requires(filesystem)
+pub Bool export_entries(Ctx c, Str out, Str src, Str root, Str rel, List(Str) names, Int i) {
+    if (i >= names.len()) { return true; }
+    Str name = names[i];
+    Str sub = if (rel == "") { src + "/" + name } else { src + "/" + rel + "/" + name };
+    Str reln = if (rel == "") { name } else { rel + "/" + name };
+    Bool isd = filesystem.is_dir(sub);
+    Bool one = if (isd) { export_dir(c, out, src, root, reln) } else { export_file(out, reln, sub) };
+    Bool rest = export_entries(c, out, src, root, rel, names, i + 1);
+    return one && rest;
+}
+
+// One file, copied as bytes.
+@requires(filesystem)
+pub Bool export_file(Str out, Str reln, Str src) {
+    Str path = out + "/" + reln;
+    filesystem.create_dir(dir_of(path));
+    filesystem.write_bytes(path, filesystem.read_bytes(src));
+    return true;
+}

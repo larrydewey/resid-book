@@ -1,0 +1,18 @@
+[book]
+title = "Sample Book"
+tagline = "A tiny book, to try resid-book"
+base = ""
+content = "src/content/docs"
+assets = "src/assets"
+repository = "https://github.com/larrydewey/resid-book"
+edit_base = ""
+
+nav = [
+    "topic|Start|intro",
+    "group|Beginning",
+    "page|",
+    "page|intro",
+    "topic|Reference|numbers",
+    "group|Details",
+    "page|numbers"
+]

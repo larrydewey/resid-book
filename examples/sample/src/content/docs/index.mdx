@@ -1,0 +1,51 @@
+---
+title: Sample Book
+description: A tiny book served by resid-book, to prove the whole pipeline.
+template: splash
+hero:
+  tagline: A book that is a directory of Markdown and one file of configuration.
+  actions:
+    - text: Read the intro
+      link: /intro/
+    - text: Numbers
+      link: /numbers/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## What remains is what matters
+
+Everything above the body is the server: the hero, the actions, the
+sidebar, the table of contents and the search.
+
+<CardGrid>
+	<Card title="Markdown in" icon="seti:markdown">
+		Pages are `.md` or `.mdx`. Frontmatter gives the title, the
+		description and, for the home page, the hero.
+	</Card>
+	<Card title="Folded rules" icon="rocket">
+		The schedule below is compile-time knowledge, so the binary
+		carries no table at all.
+	</Card>
+</CardGrid>
+
+```resid
+Int schedule_bps(Int klass) {
+    return if (klass <= 0) { 25 } else { if (klass == 1) { 50 } else { 100 } };
+}
+
+Int main() {
+    comptime_print(schedule_bps(2));
+    return 0;
+}
+```
+
+```text title="Output"
+100
+```
+
+<CardGrid>
+	<LinkCard title="The intro" href="/intro/" description="How a page becomes HTML." />
+	<LinkCard title="Numbers" href="/numbers/" description="Exact decimals." />
+</CardGrid>
