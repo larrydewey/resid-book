@@ -34,11 +34,16 @@ pub Str book_js() {
         + "})();";
 }
 
-// An asset name is served only when it is a plain file name beside one of
-// the book's asset directories (`assets = "dir,dir"`).
-Bool asset_ok(Str name) {
-    if (name == "" || str_index_of(name, "/", 0) >= 0 || str_index_of(name, "..", 0) >= 0) { return false; }
-    return true;
+// An asset is served only when it names a real file under one of the
+// book's asset directories (`assets = "dir,dir"`), nested directories
+// included: every segment must be a plain name, so `..` cannot climb out.
+Bool asset_ok(Str name) { return asset_segments_ok(str_split(name, "/"), 0); }
+
+Bool asset_segments_ok(List(Str) segs, Int i) {
+    if (i >= segs.len()) { return true; }
+    Str s = segs[i];
+    if (s == "" || s == "." || s == "..") { return false; }
+    return asset_segments_ok(segs, i + 1);
 }
 
 // The first of the comma-separated asset directories that has `name`.
@@ -54,7 +59,7 @@ Str asset_path_at(List(Str) ls, Int i, Str name, Str all) {
     if (i >= ls.len()) { return ""; }
     Str d = str_trim(ls[i]);
     Str p = if (d == "") { "" } else { d + "/" + name };
-    if (p != "" && filesystem.exists(p)) { return p; }
+    if (p != "" && filesystem.exists(p) && !filesystem.is_dir(p)) { return p; }
     return asset_path_at(ls, i + 1, name, all);
 }
 

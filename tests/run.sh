@@ -65,6 +65,18 @@ checkr "home" 200 "/"
 checkr "page" 200 "/intro/"
 checkr "page without a trailing slash" 200 "/numbers"
 checkr "asset (mascot)" 200 "/mascot.svg"
+checkr "asset in a nested directory" 200 "/img/mark.svg"
+# A path that climbs out of the asset directories is not an asset. These
+# go out with --path-as-is, because curl would fold the dot segments away
+# and the server would never see them.
+checkraw() { # checkraw <name> <expected-status> <path>
+    local name="$1" want="$2" path="$3"
+    local code; code="$(curl -s --path-as-is -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$path")"
+    if [ "$code" = "$want" ]; then ok; else bad "$name ($path: status $code, want $want)"; fi
+}
+checkraw "traversal refused" 404 "/Resid/../book.toml"
+checkraw "deep traversal refused" 404 "/Resid/../../etc/passwd"
+checkraw "dot segment refused" 404 "/Resid/./mascot.svg"
 checkr "theme script" 200 "/theme.js"
 checkr "missing page" 404 "/nope"
 
