@@ -1,15 +1,23 @@
 // src/search.resid — the search index and the live search results.
 //
-// The whole book is small, so the index is the pages themselves: for each
-// page, its slug, title, description and body text, lower-cased once at
-// startup. A query is a substring test; the result list is HTML that a
-// Datastar request splices into the search box's dropdown.
+// The whole book is small, so the index is its sections, held in memory
+// and lower-cased once at startup. A query's words are substring tests;
+// the hits are ranked, each with a snippet of its text, and the result
+// list is HTML that a Datastar request splices into the search box's
+// dropdown. A static export ships the same index as `search.js` and ranks
+// it in the browser.
 
 import "resid-datastar/datastar.resid";
 import "page.resid";
 import "book.resid";
 
-pub type Doc = { Str slug; Str title; Str description; Str hay; Str body; };
+// One entry per section, the way mdbook indexes: a page's opening text
+// (before its first `##`) is one, and each `##`/`###` heading starts
+// another, so a hit links straight to its heading. `title` is always the
+// page's; `section` and `anchor` are "" for the opening. `text` is the
+// prose without Markdown, kept in its own case for snippets; the l-fields
+// are lower-cased once at startup.
+pub type Doc = { Str slug; Str title; Str description; Str section; Str anchor; Str text; Str hay; Str ltitle; Str lsection; Str ltext; };
 
 // The whole loaded book: its config, the page order from the nav, the
 // search documents, and the mode ("serve" answers HTTP, "export" writes
@@ -29,48 +37,239 @@ pub Ctx ctx_load(Str book_toml) {
 pub List(Doc) search_index(Str content, List(Str) slugs, Int i, ListBuf(Doc) acc) {
     if (i >= slugs.len()) { return acc.finish(); }
     Option(PageMeta) p = page_load(content, slugs[i]);
-    Doc d = match p {
-        Some(m) => Doc { .slug = slugs[i], .title = m.title, .description = m.description, .hay = str_to_lower(slugs[i] + " " + m.title + " " + m.description + " " + strip_code(m.body)), .body = m.body },
-        None => Doc { .slug = slugs[i], .title = slugs[i], .description = "", .hay = str_to_lower(slugs[i]), .body = "" }
+    ListBuf(Doc) next = match p {
+        Some(m) => sections(m, str_split(m.body, "\n"), 0, false, "", "", StrBuf(), acc),
+        None => acc.push(doc(slugs[i], slugs[i], "", "", "", ""))
     };
-    return search_index(content, slugs, i + 1, acc.push(d));
+    return search_index(content, slugs, i + 1, next);
 }
 
-// The body without code, so a query matches prose, not listing symbols.
-Str strip_code(Str body) {
-    List(Str) ls = str_split(body, "\n");
-    return strip_code_at(ls, 0, false, StrBuf());
+Doc doc(Str slug, Str title, Str description, Str section, Str anchor, Str text) {
+    Str hay = str_to_lower(title + " " + section + " " + description + " " + text);
+    return Doc { .slug = slug, .title = title, .description = description, .section = section, .anchor = anchor, .text = text,
+        .hay = hay, .ltitle = str_to_lower(title), .lsection = str_to_lower(section), .ltext = str_to_lower(text) };
 }
 
-Str strip_code_at(List(Str) ls, Int i, Bool in_fence, StrBuf b) {
-    if (i >= ls.len()) { return b.finish(); }
-    if (str_starts_with(str_trim(ls[i]), "```")) { return strip_code_at(ls, i + 1, !in_fence, b); }
-    if (in_fence) { return strip_code_at(ls, i + 1, in_fence, b); }
-    return strip_code_at(ls, i + 1, in_fence, b.push(ls[i]).push(" "));
+// Walk a page's lines, closing a section at each `##`/`###` heading. Code
+// fences are left out, so a query matches prose, not listing symbols.
+ListBuf(Doc) sections(PageMeta m, List(Str) ls, Int i, Bool in_fence, Str section, Str anchor, StrBuf b, ListBuf(Doc) acc) {
+    if (i >= ls.len()) { return acc.push(section_doc(m, section, anchor, b.finish())); }
+    Str t = str_trim(ls[i]);
+    if (str_starts_with(t, "```")) { return sections(m, ls, i + 1, !in_fence, section, anchor, b, acc); }
+    if (in_fence) { return sections(m, ls, i + 1, in_fence, section, anchor, b, acc); }
+    Int lvl = heading_level(t);
+    if (lvl >= 2 && lvl <= 3) {
+        Str h = str_trim(str_slice(t, lvl, str_len(t)));
+        return sections(m, ls, i + 1, in_fence, strip_marks(h), slug_of(h), StrBuf(), acc.push(section_doc(m, section, anchor, b.finish())));
+    }
+    if (!is_prose(t)) { return sections(m, ls, i + 1, in_fence, section, anchor, b, acc); }
+    return sections(m, ls, i + 1, in_fence, section, anchor, b.push(plain(t)).push(" "), acc);
 }
 
-pub List(Doc) search_find(List(Doc) docs, Str q, Int i, ListBuf(Doc) acc) {
-    if (i >= docs.len()) { return acc.finish(); }
-    if (str_contains(docs[i].hay, q)) { return search_find(docs, q, i + 1, acc.push(docs[i])); }
-    return search_find(docs, q, i + 1, acc);
+Doc section_doc(PageMeta m, Str section, Str anchor, Str text) {
+    return doc(m.slug, m.title, if (section == "") { m.description } else { "" }, section, anchor, squeeze(str_trim(text)));
 }
+
+// MDX imports and tags, asset directives and table rules are not prose.
+Bool is_prose(Str t) {
+    return t != "" && !str_starts_with(t, "import ") && !str_starts_with(t, "<") && !str_starts_with(t, "{%") && !str_starts_with(t, "|-") && !str_starts_with(t, "|:");
+}
+
+// A line of Markdown as plain text: no list or quote marker, no emphasis
+// or code marks, links and images reduced to their text, table bars to
+// spaces.
+Str plain(Str t) {
+    Bool marker = str_starts_with(t, "- ") || str_starts_with(t, "* ") || str_starts_with(t, "> ");
+    Str l = if (marker) { str_slice(t, 2, str_len(t)) } else { t };
+    Str a = str_replace(str_replace(str_replace(str_replace(l, "`", ""), "*", ""), "|", " "), "![", "[");
+    return str_replace(str_replace(unlink(a, 0), "[", ""), "]", "");
+}
+
+// `[text](url)` -> `[text]`: drop each `(url)` that follows a `]`.
+Str unlink(Str s, Int from) {
+    Int at = str_index_of(s, "](", from);
+    if (at < 0) { return s; }
+    Int close = str_index_of(s, ")", at);
+    if (close < 0) { return s; }
+    return unlink(str_slice(s, 0, at + 1) + str_slice(s, close + 1, str_len(s)), at + 1);
+}
+
+Str squeeze(Str s) {
+    if (!str_contains(s, "  ")) { return s; }
+    return squeeze(str_replace(s, "  ", " "));
+}
+
+// ─── Ranking ────────────────────────────────────────────────────────────
+//
+// Every word of the query must appear in a section. Each word then scores
+// 10 in the section's heading (or, for a page's opening, its title), 4 in
+// the page title of a later section, and once per use in the text, up to
+// 5; the whole query, word for word, adds 8. Ties keep book order.
+// `search_js` below ranks the exported index the same way, and must stay
+// in step with this.
+
+pub type Hit = { Doc d; Int score; };
+
+pub Int search_limit() { return 20; }
+
+List(Str) query_words(Str q) { return words_at(str_split(q, " "), 0, ListBuf()); }
+
+List(Str) words_at(List(Str) ws, Int i, ListBuf(Str) acc) {
+    if (i >= ws.len()) { return acc.finish(); }
+    if (ws[i] == "") { return words_at(ws, i + 1, acc); }
+    return words_at(ws, i + 1, acc.push(ws[i]));
+}
+
+// The score for one section, or -1 when a word is missing from it.
+pub Int score(Doc d, List(Str) ws, Str q) {
+    Int n = score_at(d, ws, 0, 0);
+    if (n < 0) { return -1; }
+    return n + (if (ws.len() > 1 && str_contains(d.hay, q)) { 8 } else { 0 });
+}
+
+Int score_at(Doc d, List(Str) ws, Int i, Int n) {
+    if (i >= ws.len()) { return n; }
+    Str t = ws[i];
+    if (!str_contains(d.hay, t)) { return -1; }
+    Int head = if (str_contains(d.lsection, t)) { 10 } else { 0 };
+    Int title = if (!str_contains(d.ltitle, t)) { 0 } else { if (d.section == "") { 10 } else { 4 } };
+    Int uses = str_count(d.ltext, t);
+    return score_at(d, ws, i + 1, n + head + title + (if (uses > 5) { 5 } else { uses }));
+}
+
+pub List(Hit) search_find(List(Doc) docs, List(Str) ws, Str q, Int i, List(Hit) ranked) {
+    if (i >= docs.len()) { return ranked; }
+    Int n = score(docs[i], ws, q);
+    if (n < 0) { return search_find(docs, ws, q, i + 1, ranked); }
+    return search_find(docs, ws, q, i + 1, rank_insert(ranked, Hit { .d = docs[i], .score = n }, 0, false, ListBuf()));
+}
+
+// `h` placed after every hit scoring at least as much, so ties stay in
+// book order.
+List(Hit) rank_insert(List(Hit) hs, Hit h, Int i, Bool placed, ListBuf(Hit) acc) {
+    if (i >= hs.len()) { return if (placed) { acc.finish() } else { acc.push(h).finish() }; }
+    if (!placed && hs[i].score < h.score) { return rank_insert(hs, h, i + 1, true, acc.push(h).push(hs[i])); }
+    return rank_insert(hs, h, i + 1, placed, acc.push(hs[i]));
+}
+
+// ─── Snippets ───────────────────────────────────────────────────────────
+//
+// About 160 characters of the section's text, starting a little before
+// the first word of the query it holds, cut at spaces, with each query
+// word marked.
+
+pub Str snippet(Doc d, List(Str) ws) {
+    if (d.text == "") { return h_esc(d.description); }
+    Int first = first_use(d.ltext, ws, 0, -1);
+    Int p = if (first < 0) { 0 } else { first };
+    Int a0 = if (p > 50) { p - 50 } else { 0 };
+    Int sp = if (a0 > 0) { str_index_of(d.text, " ", a0) } else { -1 };
+    Int a = if (sp >= 0 && sp < p) { sp + 1 } else { a0 };
+    Int b0 = str_index_of(d.text, " ", a + 160);
+    Int b = if (b0 < 0) { str_len(d.text) } else { b0 };
+    Str s = str_slice(d.text, a, b);
+    return (if (a > 0) { "&hellip;" } else { "" }) + marked(s, str_to_lower(s), ws, 0, 0, StrBuf()) + (if (b < str_len(d.text)) { "&hellip;" } else { "" });
+}
+
+Int first_use(Str lt, List(Str) ws, Int i, Int best) {
+    if (i >= ws.len()) { return best; }
+    Int k = str_index_of(lt, ws[i], 0);
+    return first_use(lt, ws, i + 1, if (k >= 0 && (best < 0 || k < best)) { k } else { best });
+}
+
+// `s` escaped, with each use of a query word in `<mark>`. `run` is where
+// the unmarked text since the last mark began.
+Str marked(Str s, Str ls, List(Str) ws, Int i, Int run, StrBuf b) {
+    if (i >= str_len(s)) { return b.push(h_esc(str_slice(s, run, i))).finish(); }
+    Int n = word_at(ls, ws, i, 0);
+    if (n == 0) { return marked(s, ls, ws, i + 1, run, b); }
+    StrBuf m = b.push(h_esc(str_slice(s, run, i))).push("<mark>").push(h_esc(str_slice(s, i, i + n))).push("</mark>");
+    return marked(s, ls, ws, i + n, i + n, m);
+}
+
+// The length of the first query word at `i`, or 0.
+Int word_at(Str ls, List(Str) ws, Int i, Int j) {
+    if (j >= ws.len()) { return 0; }
+    Int n = str_len(ws[j]);
+    if (i + n <= str_len(ls) && str_slice(ls, i, i + n) == ws[j]) { return n; }
+    return word_at(ls, ws, i, j + 1);
+}
+
+// ─── Results ────────────────────────────────────────────────────────────
 
 // The dropdown's contents, as one patchable element.
 pub Str search_results(List(Doc) docs, Str q, Str base) {
-    if (q == "") { return "<div id=\"search-results\" class=\"results\" data-show=\"false\"></div>"; }
-    List(Doc) hits = search_find(docs, str_to_lower(str_trim(q)), 0, ListBuf());
+    Str lq = str_to_lower(str_trim(q));
+    List(Str) ws = query_words(lq);
+    if (ws.len() == 0) { return "<div id=\"search-results\" class=\"results\" data-show=\"false\"></div>"; }
+    List(Hit) none = [];
+    List(Hit) hits = search_find(docs, ws, lq, 0, none);
     if (hits.len() == 0) {
         return "<div id=\"search-results\" class=\"results\" data-show=\"true\"><div class=\"none\">No page matches &ldquo;" + h_esc(q) + "&rdquo;.</div></div>";
     }
-    return "<div id=\"search-results\" class=\"results\" data-show=\"true\">" + result_rows(hits, base, 0, StrBuf()) + "</div>";
+    Str count = "<div class=\"none\">" + f"{hits.len()}" + (if (hits.len() == 1) { " result" } else { " results" }) + "</div>";
+    return "<div id=\"search-results\" class=\"results\" data-show=\"true\">" + count + result_rows(hits, ws, base, 0, StrBuf()) + "</div>";
 }
 
-Str result_rows(List(Doc) docs, Str base, Int i, StrBuf b) {
+Str result_rows(List(Hit) hits, List(Str) ws, Str base, Int i, StrBuf b) {
+    if (i >= hits.len() || i >= search_limit()) { return b.finish(); }
+    Doc d = hits[i].d;
+    Str row = "<a href=\"" + h_esc(doc_url(d, base)) + "\"><strong>" + h_esc(d.title) + (if (d.section == "") { "" } else { " &raquo; " + h_esc(d.section) }) + "</strong>"
+        + "<span class=\"d\">" + snippet(d, ws) + "</span></a>";
+    return result_rows(hits, ws, base, i + 1, b.push(row));
+}
+
+pub Str doc_url(Doc d, Str base) {
+    Str u = book_url(d.slug, base);
+    return if (d.anchor == "") { u } else { u + "#" + d.anchor };
+}
+
+// ─── The exported index and its search ─────────────────────────────────
+
+// The index for a static export, as a script: `search.js` defines
+// `BOOK_SEARCH`, which `search_js` searches in the browser exactly as the
+// server would. A script rather than JSON, so a page opened from disk
+// (where `fetch` is refused) still searches.
+pub Str search_index_js(List(Doc) docs, Str base) {
+    return "window.BOOK_SEARCH=[" + index_rows(docs, base, 0, StrBuf()) + "];";
+}
+
+Str index_rows(List(Doc) docs, Str base, Int i, StrBuf b) {
     if (i >= docs.len()) { return b.finish(); }
     Doc d = docs[i];
-    Str url = book_url(d.slug, base);
-    Str row = "<a href=\"" + h_esc(url) + "\"><strong>" + h_esc(d.title) + "</strong><span class=\"d\">" + h_esc(if (d.description != "") { d.description } else { d.slug }) + "</span></a>";
-    return result_rows(docs, base, i + 1, b.push(row));
+    Str sep = if (i == 0) { "" } else { "," };
+    Str row = sep + "{\"u\":" + js_str(doc_url(d, base)) + ",\"t\":" + js_str(d.title) + ",\"s\":" + js_str(d.section)
+        + ",\"d\":" + js_str(d.description) + ",\"x\":" + js_str(d.text) + "}";
+    return index_rows(docs, base, i + 1, b.push(row));
+}
+
+Str js_str(Str s) { return "\"" + json_escape(s) + "\""; }
+
+// The browser half of an exported book's search: `score`, `snippet` and
+// `search_results` above, in JavaScript, over `BOOK_SEARCH`.
+pub Str search_js() {
+    return "var x=window.BOOK_SEARCH,q=document.querySelector('.search input'),o=document.getElementById('search-results'),w;"
+        + "function esc(s){return s.replace(/[&<>\"']/g,function(c){return '&#'+c.charCodeAt(0)+';';});}"
+        + "function score(d,ws,s){var n=0;for(var i=0;i<ws.length;i++){var t=ws[i];if(d.h.indexOf(t)<0)return -1;"
+        + "n+=(d.ls.indexOf(t)>=0?10:0)+(d.lt.indexOf(t)<0?0:d.s?4:10)+Math.min(d.lx.split(t).length-1,5);}"
+        + "return n+(ws.length>1&&d.h.indexOf(s)>=0?8:0);}"
+        + "function snip(d,ws){var x=d.x,lx=d.lx;if(!x)return esc(d.d);var p=-1;"
+        + "ws.forEach(function(t){var k=lx.indexOf(t);if(k>=0&&(p<0||k<p))p=k;});if(p<0)p=0;"
+        + "var a=p>50?p-50:0,sp=a>0?x.indexOf(' ',a):-1;if(sp>=0&&sp<p)a=sp+1;var b=x.indexOf(' ',a+160);if(b<0)b=x.length;"
+        + "var s=x.slice(a,b),ls=s.toLowerCase(),r='',run=0,i=0;"
+        + "while(i<s.length){var m=0;for(var j=0;j<ws.length;j++){if(ls.substr(i,ws[j].length)===ws[j]){m=ws[j].length;break;}}"
+        + "if(m){r+=esc(s.slice(run,i))+'<mark>'+esc(s.slice(i,i+m))+'</mark>';i+=m;run=i;}else i++;}"
+        + "return (a>0?'&hellip;':'')+r+esc(s.slice(run))+(b<x.length?'&hellip;':'');}"
+        + "function find(){var s=q.value.trim().toLowerCase(),ws=s.split(' ').filter(Boolean);if(!ws.length){o.hidden=true;o.innerHTML='';return;}"
+        + "var r=[];x.forEach(function(d,i){var n=score(d,ws,s);if(n>=0)r.push([n,i,d]);});r.sort(function(a,b){return b[0]-a[0]||a[1]-b[1];});"
+        + "o.innerHTML=r.length?'<div class=\"none\">'+r.length+(r.length===1?' result':' results')+'</div>'+r.slice(0," + f"{search_limit()}" + ").map(function(e){var d=e[2];"
+        + "return '<a href=\"'+esc(d.u)+'\"><strong>'+esc(d.t)+(d.s?' &raquo; '+esc(d.s):'')+'</strong><span class=\"d\">'+snip(d,ws)+'</span></a>';}).join('')"
+        + ":'<div class=\"none\">No page matches &ldquo;'+esc(q.value.trim())+'&rdquo;.</div>';o.hidden=false;}"
+        + "if(x&&q&&o){x.forEach(function(d){d.lt=d.t.toLowerCase();d.ls=d.s.toLowerCase();d.lx=d.x.toLowerCase();"
+        + "d.h=d.lt+' '+d.ls+' '+d.d.toLowerCase()+' '+d.lx;});"
+        + "q.addEventListener('input',function(){clearTimeout(w);w=setTimeout(find,200);});"
+        + "q.addEventListener('keydown',function(e){if(e.key==='Escape'){q.value='';find();}});"
+        + "document.addEventListener('click',function(e){if(!q.parentNode.contains(e.target))o.hidden=true;});}";
 }
 
 // The site path for a slug. The server serves under the book's base.

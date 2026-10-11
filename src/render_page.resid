@@ -180,7 +180,9 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
 // and this file only the theme; a static export has no Datastar, so the
 // same file does both.
 pub Str book_script(Ctx c, Str base) {
-    return "<script src=\"" + base + "/book.js\" defer></script>";
+    // The export's search index loads first; `defer` keeps the order.
+    Str index = if (c.mode == "export") { "<script src=\"" + base + "/search.js\" defer></script>" } else { "" };
+    return index + "<script src=\"" + base + "/book.js\" defer></script>";
 }
 
 pub Str hamburger(Ctx c) {
@@ -199,7 +201,10 @@ pub Str body_attrs(Ctx c) {
 }
 
 pub Str search_box(Ctx c, Str base) {
-    if (c.mode == "export") { return ""; }
+    // A static export searches in the browser, from `search.js`.
+    if (c.mode == "export") {
+        return "<div class=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search\"><div id=\"search-results\" class=\"results\" hidden></div></div>";
+    }
     return "<div class=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search\" data-bind:q data-on:input__debounce.200ms=\"@get('"
         + base + "/ui/search')\"><div id=\"search-results\" class=\"results\" data-show=\"false\"></div></div>";
 }

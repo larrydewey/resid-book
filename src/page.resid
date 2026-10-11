@@ -145,7 +145,7 @@ List(Heading) page_headings_at(List(Str) ls, Int i, Bool in_fence, ListBuf(Headi
     return page_headings_at(ls, i + 1, in_fence, acc);
 }
 
-Int heading_level(Str t) {
+pub Int heading_level(Str t) {
     if (str_starts_with(t, "### ")) { return 3; }
     if (str_starts_with(t, "## ")) { return 2; }
     if (str_starts_with(t, "# ")) { return 1; }
@@ -164,7 +164,7 @@ Str slug_at(Str s, Int i, StrBuf b) {
 }
 
 // Drop `foo`, backticks and link syntax from a heading's text.
-Str strip_marks(Str s) {
+pub Str strip_marks(Str s) {
     if (str_starts_with(s, "`") && str_ends_with(s, "`")) { return str_slice(s, 1, str_len(s) - 1); }
     return s;
 }

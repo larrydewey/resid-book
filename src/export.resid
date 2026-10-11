@@ -5,8 +5,9 @@
 // exactly what a browser would have been served.
 // `<out>/<slug>/index.html` for each page, the home page at `<out>/index.html`.
 // In `export` mode the live search endpoint and the client bundle are left
-// out, because on a static host there is no server to answer either; the
-// `mode` lives in Ctx, so one renderer serves both.
+// out, because on a static host there is no server to answer either; search
+// runs in the browser from `search.js` instead. The `mode` lives in Ctx, so
+// one renderer serves both.
 
 import "resid-datastar/datastar.resid";
 import "page.resid";

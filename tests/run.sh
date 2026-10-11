@@ -26,7 +26,7 @@ export RESID_HOME="${RESID_HOME:-$(cd "$(dirname "$COMPILER")" && pwd)}"
 
 cd "$ROOT"
 T="$(mktemp -d)"
-trap 'rm -rf "$T"; kill ${SRV:-0} 2>/dev/null' EXIT
+trap 'rm -rf "$T"; [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null' EXIT
 
 pass=0
 fail=0
@@ -118,6 +118,13 @@ if "$T/resid-book" export examples/sample/book.toml "$T/dist" >/dev/null 2>&1; t
     for f in index.html intro/index.html numbers/index.html mascot.svg nested.svg img/mark.svg book.js; do
         [ -s "$T/dist/$f" ] && ok || bad "export missing or empty: $f"
     done
+    # Search works without a server: the index ships beside the pages, and
+    # every page loads it and has a search box.
+    check "export search index" '"t":"Numbers"' "$(cat "$T/dist/search.js")"
+    check "export index holds body text" 'decimals' "$(cat "$T/dist/search.js")"
+    check "export page loads the index" '/search.js" defer' "$(cat "$T/dist/intro/index.html")"
+    check "export page has a search box" 'class="search"><input' "$(cat "$T/dist/intro/index.html")"
+    check "export search runs in the browser" 'BOOK_SEARCH' "$(cat "$T/dist/book.js")"
     # .nojekyll is a marker: it must exist, and must be empty.
     [ -f "$T/dist/.nojekyll" ] && ok || bad "export missing: .nojekyll"
 else
@@ -129,9 +136,37 @@ for r in $(grep -rhoE '\(/(img/)?[A-Za-z0-9_./-]+\.svg\)' examples/sample/src/co
 done
 
 # ── Live search (a Datastar GET) ───────────────────────────────────────
-SIG="$(python3 -c 'import urllib.parse;print(urllib.parse.quote("{\"q\":\"decimals\"}"))')"
-check "search finds a page" "Numbers" "$(curl -s -H 'Datastar-Request: true' "http://127.0.0.1:$PORT/ui/search?datastar=$SIG")"
-check "search emits a patch event" "datastar-patch-elements" "$(curl -s -H 'Datastar-Request: true' "http://127.0.0.1:$PORT/ui/search?datastar=$SIG")"
+# search <query>: the patch event the server answers a query with.
+search() {
+    local sig; sig="$(python3 -c 'import json,sys,urllib.parse;print(urllib.parse.quote(json.dumps({"q":sys.argv[1]})))' "$1")"
+    curl -s -H 'Datastar-Request: true' "http://127.0.0.1:$PORT/ui/search?datastar=$sig"
+}
+check "search finds a page" "Numbers" "$(search decimals)"
+check "search emits a patch event" "datastar-patch-elements" "$(search decimals)"
+# Every word must match, in any order; a word on no page matches nothing.
+check "search matches all words" "Numbers" "$(search 'decimals numbers')"
+check "search rejects a missing word" "No page matches" "$(search 'decimals zzqx')"
+# Hits are sections, linked to their heading, with the page and heading.
+check "search links to the section" 'href="/intro/#a-code-block"' "$(search 'code block')"
+check "search names page and section" "The intro &raquo; A code block" "$(search 'code block')"
+# A snippet of the section's text, with the query's words marked.
+check "search snippet marks the word" "<mark>nav</mark>" "$(search nav)"
+check "search counts the hits" "result" "$(search nav)"
+# A heading that holds the word outranks text that only mentions it, even
+# text earlier in the book (the home page's sections come first).
+first="$(search server | grep -o 'href="[^"]*"' | head -1)"
+[ "$first" = 'href="/intro/#what-the-server-adds"' ] && ok || bad "heading match ranks first (got $first)"
+# Markdown syntax is not indexed: no backticks or link targets in text.
+if grep -q '`' "$T/dist/search.js" 2>/dev/null; then bad "backticks in the search index"; else ok; fi
+
+# The exported search, run in node, must answer exactly as the server does.
+if command -v node >/dev/null && [ -s "$T/dist/search.js" ]; then
+    for q in nav page server 'code block' 'decimals numbers' Numbers zzqx; do
+        want="$(search "$q" | python3 -c 'import re,sys;m=re.search(r"<div id=\"search-results\"[^>]*>(.*)</div>",sys.stdin.read());print(m.group(1) if m else "")')"
+        got="$(node tests/search_parity.js "$T/dist" "$q")"
+        [ "$got" = "$want" ] && ok || bad "exported search differs from the server for '$q'"$'\n'"  server: $want"$'\n'"  browser: $got"
+    done
+fi
 
 echo "resid-book: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -31,6 +31,7 @@ pub Str book_js() {
         + "if(n)n.addEventListener('click',function(){set(document.body.dataset.nav!=='open');});"
         + "if(v)v.addEventListener('click',function(){set(false);});"
         + "document.addEventListener('keydown',function(e){if(e.key==='/'&&e.target.tagName!=='INPUT'){var i=document.querySelector('.search input');if(i){e.preventDefault();i.focus();}}});"
+        + search_js()
         + "})();";
 }
 
@@ -134,6 +135,8 @@ Int cmd_export(Int argc) {
     Bool assets = export_assets(c, out, str_split(c.assets, ","), 0);
     // The theme and drawer script, so the static pages stay interactive.
     filesystem.write_all(out + "/book.js", book_js());
+    // The search index, searched in the browser by `book.js`.
+    filesystem.write_all(out + "/search.js", search_index_js(c.docs, c.b.base));
     // GitHub Pages skips directories beginning with `_`; `.nojekyll` opts
     // the whole tree out of its Jekyll pass, so static hosts serve it all.
     filesystem.write_all(out + "/.nojekyll", "");

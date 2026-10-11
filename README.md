@@ -60,8 +60,13 @@ Markdown is only half a page, so the server adds the rest:
   anchors that match the ones the Markdown renderer emits;
 - **previous and next** links along the book's page order, and an *Edit this
   page* link built from `edit_base`;
-- **live search** — over the whole book as you type, a Datastar request that
-  patches the results into the search box;
+- **search** — over the whole book as you type, the way mdbook does it:
+  each `##`/`###` section is its own hit, linked to its heading; every word
+  of the query must match, in any order; hits are ranked (a word in the
+  heading or title beats one in the text, and more uses beat fewer); and
+  each shows a snippet with the words marked. Served, a Datastar request patches the results into the search
+  box; exported, the index ships as `search.js` and the browser searches
+  it, so a static host (or a page opened from disk) searches too;
 - **a theme toggle** and an **off-canvas sidebar** on small screens;
 - **code fences highlighted** — comments, strings, numbers, keywords and
   type-like names, with a block title (` ```text title="Output" `).
@@ -113,6 +118,7 @@ Against a full Starlight install, these are still missing:
 | `src/theme.resid` | the stylesheet |
 | `examples/sample/` | a book that exercises all of it |
 | `tests/run.sh` | the suite: build, serve, and check the routes |
+| `tests/search_parity.js` | the exported search in node, compared with the server's |
 
 ## Requirements
 
