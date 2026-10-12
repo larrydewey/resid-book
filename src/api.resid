@@ -4,8 +4,9 @@
 // one page per module under `api/`, built when the book is loaded: the
 // module's leading `//` comment is its overview, and every top-level
 // declaration a program can import (a `pub` function, any `type` or
-// `behavior`) is listed with its annotations, its declaration as written
-// and its `///` doc comment. Nothing is written by hand, so the reference
+// `behavior`; not a `@verify_internal` function, which only its own
+// directory may call) is listed with its annotations, its declaration as
+// written and its `///` doc comment. Nothing is written by hand, so the reference
 // cannot drift from the code it describes.
 //
 //   api = "../lib"                  the source root, beside book.toml
@@ -179,6 +180,9 @@ List(ApiItem) items_at(List(Str) ls, Int i, ListBuf(ApiItem) acc) {
     if (!is_api_line(ls[i])) { return items_at(ls, i + 1, acc); }
     Int a = annot_start(ls, i - 1);
     List(Str) anns = ls[a..i];
+    // A function only its own directory may call (Resid's @verify_internal,
+    // E0280) is no API: a program cannot import it.
+    if (has_ann(anns, "@verify_internal", 0)) { return items_at(ls, i + 1, acc); }
     List(Str) doc = doc_lines(ls, a - 1, []);
     Str rest = str_join(ls[i..min(i + 40, ls.len())], "\n");
     Str src = if (str_starts_with(rest, "pub ")) { str_slice(rest, 4, str_len(rest)) } else { rest };
@@ -191,6 +195,15 @@ List(ApiItem) items_at(List(Str) ls, Int i, ListBuf(ApiItem) acc) {
         .doc = str_join(doc, "\n"), .caps = caps_of(anns, 0, ListBuf()), .line = i + 1
     };
     return items_at(ls, i + 1, acc.push(it));
+}
+
+/// Whether one of the annotation lines `anns` is `name`, bare or with
+/// arguments.
+pub Bool has_ann(List(Str) anns, Str name, Int i) {
+    if (i >= anns.len()) { return false; }
+    Str a = str_trim(anns[i]);
+    Bool hit = a == name || str_starts_with(a, name + "(");
+    return hit || has_ann(anns, name, i + 1);
 }
 
 Int annot_start(List(Str) ls, Int j) {
