@@ -91,6 +91,37 @@ only the operating system. The bundled `mascot.svg` does this with
 `--mascot-fill` and `--mascot-line`, and falls back to `prefers-color-scheme`
 when it stands alone.
 
+## An API reference from the source
+
+A book about Resid code can carry its API reference, generated when the
+book is loaded rather than written by hand, so it cannot drift from the
+code:
+
+```toml
+api = "../lib"                    # the source root, beside book.toml
+api_dirs = ",dev,verify"          # sub-directories; "" is the root itself
+api_source = "https://github.com/o/r/blob/master/lib/"   # "Source" links
+```
+
+Every `.resid` file under those directories becomes a page at
+`api/<path>/`, and `api/` is an index of them with each module's summary
+and a list, per capability family, of the functions whose `@requires`
+names it. The nav gains an **API** topic with a group per directory, and
+the pages are searched and exported like any other.
+
+A module page is built from the source alone:
+
+- the module's leading `//` comment is its overview; a decorated first
+  line (`// ─── lib/x.resid — what it is ───`) is its title and summary;
+- every declaration an importer can see — a `pub` function, and any `type`
+  or `behavior` (visible without `pub`) — is listed under Types, Behaviors
+  or Functions with its annotations, its declaration as written (the body
+  left out) and the `///` lines directly above it;
+- private functions are left out.
+
+The standard library is written to this shape: every such declaration has
+a `///` comment, which Resid's `tools/check_doc_comments.py` enforces.
+
 ## Not yet
 
 Against a full Starlight install, these are still missing:
@@ -115,6 +146,7 @@ Against a full Starlight install, these are still missing:
 | `src/render.resid` | a body to HTML: fences, MDX components, Markdown |
 | `src/highlight.resid` | the syntax highlighter |
 | `src/search.resid` | the search index and the live results |
+| `src/api.resid` | the API reference, generated from a source tree |
 | `src/theme.resid` | the stylesheet |
 | `examples/sample/` | a book that exercises all of it |
 | `tests/run.sh` | the suite: build, serve, and check the routes |

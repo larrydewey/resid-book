@@ -10,6 +10,7 @@
 import "resid-datastar/datastar.resid";
 import "page.resid";
 import "book.resid";
+import "api.resid";
 
 // One entry per section, the way mdbook indexes: a page's opening text
 // (before its first `##`) is one, and each `##`/`###` heading starts
@@ -22,26 +23,38 @@ pub type Doc = { Str slug; Str title; Str description; Str section; Str anchor; 
 // The whole loaded book: its config, the page order from the nav, the
 // search documents, and the mode ("serve" answers HTTP, "export" writes
 // static files).
-pub type Ctx = { Book b; List(Doc) docs; List(Str) pages; Str mode; Str content; Str assets; };
+pub type Ctx = { Book b; List(Doc) docs; List(Str) pages; Str mode; Str content; Str assets; List(ApiMod) api; };
 
 @requires(filesystem(readonly))
 pub Ctx ctx_load(Str book_toml) {
-    Book b = book_read(book_toml);
+    Book b0 = book_read(book_toml);
+    Str root = if (b0.api == "") { "" } else { book_path(b0.dir, b0.api) };
+    List(ApiMod) api = api_load(ApiCfg { .root = root, .dirs = str_split(b0.api_dirs, ","), .source = b0.api_source });
+    Book b = Book { .title = b0.title, .tagline = b0.tagline, .base = b0.base, .content = b0.content, .assets = b0.assets,
+        .edit_base = b0.edit_base, .repository = b0.repository, .dir = b0.dir, .nav = b0.nav.concat(api_nav(api)),
+        .api = b0.api, .api_dirs = b0.api_dirs, .api_source = b0.api_source };
     List(Str) pages = nav_pages(b.nav);
     Str content = book_path(b.dir, b.content);
     Str assets = book_paths(b.dir, b.assets);
-    return Ctx { .b = b, .docs = search_index(content, pages, 0, ListBuf()), .pages = pages, .mode = "serve", .content = content, .assets = assets };
+    return Ctx { .b = b, .docs = search_index(content, api, b, pages, 0, ListBuf()), .pages = pages, .mode = "serve", .content = content, .assets = assets, .api = api };
+}
+
+/// The page at `slug`: a generated API page, else the Markdown file.
+@requires(filesystem(readonly))
+pub Option(PageMeta) page_get(Str content, List(ApiMod) api, Book b, Str slug) {
+    Option(PageMeta) a = api_page(api, b.api_source, b.base, slug);
+    return match a { Some(p) => a, None => page_load(content, slug) };
 }
 
 @requires(filesystem(readonly))
-pub List(Doc) search_index(Str content, List(Str) slugs, Int i, ListBuf(Doc) acc) {
+pub List(Doc) search_index(Str content, List(ApiMod) api, Book b, List(Str) slugs, Int i, ListBuf(Doc) acc) {
     if (i >= slugs.len()) { return acc.finish(); }
-    Option(PageMeta) p = page_load(content, slugs[i]);
+    Option(PageMeta) p = page_get(content, api, b, slugs[i]);
     ListBuf(Doc) next = match p {
         Some(m) => sections(m, str_split(m.body, "\n"), 0, false, "", "", StrBuf(), acc),
         None => acc.push(doc(slugs[i], slugs[i], "", "", "", ""))
     };
-    return search_index(content, slugs, i + 1, next);
+    return search_index(content, api, b, slugs, i + 1, next);
 }
 
 Doc doc(Str slug, Str title, Str description, Str section, Str anchor, Str text) {

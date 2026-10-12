@@ -1,0 +1,28 @@
+// ─── api/shapes.resid — shapes and their areas ────────────────────────
+// A module for the API reference fixture: a record, a sum, a behavior and
+// functions, one of them with a capability.
+//
+// The header's second paragraph is part of the overview.
+
+/// A point on the plane.
+type Point = { Int x; Int y; };
+
+/// A shape: a circle by its radius, or a rectangle by two corners.
+type Shape = Circle(Int) | Rect(Point);
+
+/// What a shape knows about itself.
+behavior Area(T) { Float area(T s); }
+
+/// The area of `s`, in square units.
+pub Float shape_area(Shape s) { return 0.0; }
+
+/// The shapes listed in the file at `path`, one per line.
+/// An unreadable file gives an empty list.
+@requires(filesystem(readonly))
+pub List(Shape) shapes_read(
+    Str path) {
+    return [];
+}
+
+// A private helper: not part of the API.
+Int helper() { return 1; }

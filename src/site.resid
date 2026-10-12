@@ -46,7 +46,7 @@ HttpReply not_found(Ctx c) {
 // The rendered page for `slug`, or "" when there is none.
 @requires(filesystem(readonly))
 Str render_page(Ctx c, Str slug) {
-    Option(PageMeta) m = page_load(c.content, slug);
+    Option(PageMeta) m = page_get(c.content, c.api, c.b, slug);
     return match m {
         Some(x) => render_page_html(c, x),
         None => ""
@@ -128,7 +128,7 @@ Int cmd_export(Int argc) {
     Str book = args.get(2);
     Str out = args.get(3);
     Ctx c0 = ctx_load(book);
-    Ctx c = Ctx { .b = c0.b, .docs = c0.docs, .pages = c0.pages, .mode = "export", .content = c0.content, .assets = c0.assets };
+    Ctx c = Ctx { .b = c0.b, .docs = c0.docs, .pages = c0.pages, .mode = "export", .content = c0.content, .assets = c0.assets, .api = c0.api };
     filesystem.create_dir(out);
     List(Str) slugs = export_slugs(c);
     Bool pages = write_pages(c, out, slugs, 0);

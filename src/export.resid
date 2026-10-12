@@ -12,6 +12,7 @@
 import "resid-datastar/datastar.resid";
 import "page.resid";
 import "render_page.resid";
+import "search.resid";
 
 // Where a page's file goes: the home page at `<out>/index.html`, every
 // other page at `<out>/<slug>/index.html`.
@@ -31,7 +32,7 @@ Str last_slash_dir(Str path, Int i) {
 
 @requires(filesystem)
 pub Bool write_page(Ctx c, Str out, Str slug) {
-    Option(PageMeta) m = page_load(c.content, slug);
+    Option(PageMeta) m = page_get(c.content, c.api, c.b, slug);
     PageMeta p = m else { empty_page() };
     Bool found = m_is_some(m);
     if (!found) { return true; }

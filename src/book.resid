@@ -13,6 +13,7 @@ pub type Book = {
     Str title; Str tagline; Str base; Str content; Str assets; Str edit_base; Str repository;
     Str dir;
     List(NavItem) nav;
+    Str api; Str api_dirs; Str api_source;
 };
 
 pub type NavItem = NTopic(Str, Str) | NGroup(Str) | NPage(Str);
@@ -31,7 +32,10 @@ pub Book book_read(Str path) {
         .assets = bf(text, "assets"),
         .edit_base = bf(text, "edit_base"),
         .repository = bf(text, "repository"),
-        .nav = nav_parse(nav_strings(text))
+        .nav = nav_parse(nav_strings(text)),
+        .api = bf(text, "api"),
+        .api_dirs = bf(text, "api_dirs"),
+        .api_source = bf(text, "api_source")
     };
 }
 

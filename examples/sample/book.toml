@@ -6,6 +6,9 @@ content = "src/content/docs"
 assets = "src/assets"
 repository = "https://github.com/larrydewey/resid-book"
 edit_base = ""
+api = "api"
+api_dirs = ",dev"
+api_source = "https://example.com/src/"
 
 nav = [
     "topic|Start|intro",

@@ -1,0 +1,443 @@
+// src/api.resid — the API reference, generated from the source.
+//
+// A book that names a source tree in `book.toml` (`api = "../lib"`) gets
+// one page per module under `api/`, built when the book is loaded: the
+// module's leading `//` comment is its overview, and every top-level
+// declaration a program can import (a `pub` function, any `type` or
+// `behavior`) is listed with its annotations, its declaration as written
+// and its `///` doc comment. Nothing is written by hand, so the reference
+// cannot drift from the code it describes.
+//
+//   api = "../lib"                  the source root, beside book.toml
+//   api_dirs = ",dev,verify"        sub-directories, "" for the root
+//   api_source = "https://github.com/o/r/blob/master/lib/"  "Source" links
+
+import "page.resid";
+
+/// One documented declaration: its kind ("fn", "type" or "behavior"),
+/// name, the declaration as written (annotations included, `pub` and any
+/// body left out), its doc comment, the capability families its
+/// `@requires` names and its line in the source file.
+pub type ApiItem = { Str kind; Str name; Str decl; Str doc; List(Str) caps; Int line; };
+
+/// One module: its page slug, its import path, the directory group it is
+/// listed under, the summary and overview from its header comment, the
+/// path it was read from and its declarations in source order.
+pub type ApiMod = { Str slug; Str import; Str group; Str summary; Str intro; Str file; List(ApiItem) items; };
+
+/// The API settings of a book: the source root ("" when the book has no
+/// API reference), the sub-directories to read and the base of the
+/// source links ("" for none).
+pub type ApiCfg = { Str root; List(Str) dirs; Str source; };
+
+// ─── Loading ────────────────────────────────────────────────────────────
+
+/// Every module under the configured directories, each directory's
+/// modules in name order; empty when `root` is "".
+@requires(filesystem(readonly))
+pub List(ApiMod) api_load(ApiCfg cfg) {
+    if (cfg.root == "") { return []; }
+    return api_dirs_at(cfg, 0, ListBuf());
+}
+
+@requires(filesystem(readonly))
+List(ApiMod) api_dirs_at(ApiCfg cfg, Int i, ListBuf(ApiMod) acc) {
+    if (i >= cfg.dirs.len()) { return acc.finish(); }
+    Str sub = str_trim(cfg.dirs[i]);
+    Str dir = if (sub == "") { cfg.root } else { cfg.root + "/" + sub };
+    List(Str) names = sort(resid_files(filesystem.list_dir(dir), 0, ListBuf()));
+    return api_dirs_at(cfg, i + 1, api_files_at(dir, sub, names, 0, acc));
+}
+
+List(Str) resid_files(List(Str) names, Int i, ListBuf(Str) acc) {
+    if (i >= names.len()) { return acc.finish(); }
+    Str n = names[i];
+    return resid_files(names, i + 1, if (str_ends_with(n, ".resid")) { acc.push(n) } else { acc });
+}
+
+@requires(filesystem(readonly))
+ListBuf(ApiMod) api_files_at(Str dir, Str sub, List(Str) names, Int i, ListBuf(ApiMod) acc) {
+    if (i >= names.len()) { return acc; }
+    Str file = dir + "/" + names[i];
+    Str stem = str_slice(names[i], 0, str_len(names[i]) - 6);
+    Str rel = if (sub == "") { stem } else { sub + "/" + stem };
+    ApiMod m = api_module(file, rel, if (sub == "") { "" } else { sub + "/" }, filesystem.read_all(file));
+    return api_files_at(dir, sub, names, i + 1, acc.push(m));
+}
+
+/// The module read from `text`: `rel` is its path below the source root
+/// without the extension ("crypto", "dev/tpm"), `group` its directory.
+pub ApiMod api_module(Str file, Str rel, Str group, Str text) {
+    List(Str) ls = str_split(str_replace(text, "\r\n", "\n"), "\n");
+    Int h = header_start(ls, 0);
+    List(Str) head = header_lines(ls, h, ListBuf());
+    Str first = if (head.len() > 0) { head[0] } else { "" };
+    // A decorated first line (`// ─── lib/x.resid — what it is ───`) is a
+    // title of its own; otherwise the first paragraph starts the prose.
+    Bool decorated = h < ls.len() && (str_contains(ls[h], "───") || str_starts_with(ls[h], "// --"));
+    Str title = if (decorated) { title_of_line(first) } else { "" };
+    List(Str) body = if (title != "") { head[1..head.len()] } else { head };
+    List(Str) paras = str_split(str_trim(str_join(body, "\n")), "\n\n");
+    Str p0 = if (paras.len() > 0) { str_replace(paras[0], "\n", " ") } else { "" };
+    Str t0 = title_of_line(p0);
+    Str lead = first_sentence(if (t0 != "") { t0 } else { p0 });
+    Str sum0 = if (title != "") { first_sentence(title) } else { lead };
+    return ApiMod {
+        .slug = "api/" + rel, .import = rel + ".resid", .group = group,
+        .summary = if (str_starts_with(sum0, "GENERATED")) { generated_summary(str_join(head, " ")) } else { sum0 },
+        .intro = str_trim(str_join(body, "\n")), .file = file,
+        .items = items_at(ls, 0, ListBuf())
+    };
+}
+
+// ─── The header comment ────────────────────────────────────────────────
+
+// The first comment line, past any imports and blank lines above it.
+Int header_start(List(Str) ls, Int i) {
+    if (i >= ls.len()) { return i; }
+    Str t = str_trim(ls[i]);
+    if (t == "" || str_starts_with(t, "import ")) { return header_start(ls, i + 1); }
+    return i;
+}
+
+// The leading `//` block, with each line's `//` and one space removed and
+// a decorated title line (`// ─── lib/x.resid — what it is ───`) reduced
+// to its words.
+List(Str) header_lines(List(Str) ls, Int i, ListBuf(Str) acc) {
+    if (i >= ls.len()) { return acc.finish(); }
+    Str l = ls[i];
+    if (!str_starts_with(l, "//") || str_starts_with(l, "///")) { return acc.finish(); }
+    Str body = str_slice(l, 2, str_len(l));
+    Str t = strip_rule(if (str_starts_with(body, " ")) { str_slice(body, 1, str_len(body)) } else { body });
+    return header_lines(ls, i + 1, acc.push(t));
+}
+
+// `─── x ───`, `--- x ---`, `-- x --` to `x`; other text unchanged.
+Str strip_rule(Str s) {
+    Str a = trim_rule_left(s, 0);
+    return trim_rule_right(a, str_len(a));
+}
+
+Bool is_rule_char(Int c) { return c == 9472 || c == 45 || c == 61 || c == 32; }
+
+Str trim_rule_left(Str s, Int i) {
+    if (i >= str_len(s)) { return ""; }
+    if (i < 2 && !is_rule_char(str_char_at(s, i))) { return s; }
+    if (is_rule_char(str_char_at(s, i))) { return trim_rule_left(s, i + 1); }
+    return str_slice(s, i, str_len(s));
+}
+
+Str trim_rule_right(Str s, Int n) {
+    if (n <= 0) { return ""; }
+    Int c = str_char_at(s, n - 1);
+    Bool rule = c == 9472 || c == 45 || c == 61;
+    Bool more = n >= 2 && (is_rule_char(str_char_at(s, n - 2)));
+    if (rule && more) { return trim_rule_right(s, n - 1); }
+    if (c == 32 && n >= 2 && is_rule_char(str_char_at(s, n - 2))) { return trim_rule_right(s, n - 1); }
+    return str_slice(s, 0, n);
+}
+
+// A title line `lib/x.resid — what it is` (or ` - `) gives `what it is`;
+// "" when the line is not one.
+Str title_of_line(Str s) {
+    Int dash = str_index_of(s, " — ", 0);
+    Int at = if (dash >= 0) { dash } else { str_index_of(s, " - ", 0) };
+    if (at > 0 && str_contains(str_slice(s, 0, at), ".resid")) { return str_trim(str_slice(s, at + 3, str_len(s))); }
+    return "";
+}
+
+// A generated module's summary: what its header says after "do not
+// edit", else that it is generated.
+Str generated_summary(Str text) {
+    Int at = str_index_of(text, "do not edit", 0);
+    Str rest = if (at < 0) { "" } else { str_trim(str_slice(text, at + 11, str_len(text))) };
+    Str r = if (str_starts_with(rest, ".") || str_starts_with(rest, ";")) { str_trim(str_slice(rest, 1, str_len(rest))) } else { rest };
+    Str t = title_of_line(r);
+    Str one = first_sentence(if (t != "") { t } else { r });
+    return if (one == "") { "Generated module." } else { one };
+}
+
+/// The text up to and including the first ". " (or all of it), with its
+/// first letter capitalized.
+pub Str first_sentence(Str s) {
+    Int p = str_index_of(s, ". ", 0);
+    Str one = if (p < 0) { s } else { str_slice(s, 0, p + 1) };
+    if (str_len(one) == 0) { return one; }
+    Int c = str_char_at(one, 0);
+    return if (c >= 97 && c <= 122) { StrBuf().push_char(c - 32).finish() + str_slice(one, 1, str_len(one)) } else { one };
+}
+
+// ─── Declarations ───────────────────────────────────────────────────────
+
+/// Whether a source line starts a declaration a program can import.
+pub Bool is_api_line(Str l) {
+    return str_starts_with(l, "pub ") || str_starts_with(l, "type ") || str_starts_with(l, "behavior ");
+}
+
+List(ApiItem) items_at(List(Str) ls, Int i, ListBuf(ApiItem) acc) {
+    if (i >= ls.len()) { return acc.finish(); }
+    if (!is_api_line(ls[i])) { return items_at(ls, i + 1, acc); }
+    Int a = annot_start(ls, i - 1);
+    List(Str) anns = ls[a..i];
+    List(Str) doc = doc_lines(ls, a - 1, []);
+    Str rest = str_join(ls[i..min(i + 40, ls.len())], "\n");
+    Str src = if (str_starts_with(rest, "pub ")) { str_slice(rest, 4, str_len(rest)) } else { rest };
+    Str kind = if (str_starts_with(src, "type ")) { "type" } else if (str_starts_with(src, "behavior ")) { "behavior" } else { "fn" };
+    Str body = if (kind == "type") { cut_type(src, 0, 0, 0) } else if (kind == "behavior") { cut_block(src, 0, 0, false) } else { cut_sig(src, 0, 0) };
+    Str name = if (kind == "fn") { fn_name(src) } else { word_at(src, str_index_of(src, " ", 0) + 1) };
+    ApiItem it = ApiItem {
+        .kind = kind, .name = name,
+        .decl = str_join(anns.concat([body]), "\n"),
+        .doc = str_join(doc, "\n"), .caps = caps_of(anns, 0, ListBuf()), .line = i + 1
+    };
+    return items_at(ls, i + 1, acc.push(it));
+}
+
+Int annot_start(List(Str) ls, Int j) {
+    if (j < 0 || !str_starts_with(ls[j], "@")) { return j + 1; }
+    return annot_start(ls, j - 1);
+}
+
+// The `///` lines ending at line `j`, in order, without their markers.
+List(Str) doc_lines(List(Str) ls, Int j, List(Str) acc) {
+    if (j < 0 || !str_starts_with(ls[j], "///")) { return acc; }
+    Str t = str_slice(ls[j], 3, str_len(ls[j]));
+    Str body = if (str_starts_with(t, " ")) { str_slice(t, 1, str_len(t)) } else { t };
+    return doc_lines(ls, j - 1, [body].concat(acc));
+}
+
+// A function's declaration: everything before the body's `{` (the first
+// brace outside parentheses).
+Str cut_sig(Str s, Int i, Int depth) {
+    if (i >= str_len(s)) { return str_trim(s); }
+    Int c = str_char_at(s, i);
+    if (c == 123 && depth == 0) { return str_trim(str_slice(s, 0, i)); }
+    Int d = if (c == 40) { depth + 1 } else if (c == 41) { depth - 1 } else { depth };
+    return cut_sig(s, i + 1, d);
+}
+
+// A type: up to the `;` outside braces and parentheses.
+Str cut_type(Str s, Int i, Int br, Int pa) {
+    if (i >= str_len(s)) { return str_trim(s); }
+    Int c = str_char_at(s, i);
+    if (c == 59 && br == 0 && pa == 0) { return str_slice(s, 0, i + 1); }
+    Int b = if (c == 123) { br + 1 } else if (c == 125) { br - 1 } else { br };
+    Int p = if (c == 40) { pa + 1 } else if (c == 41) { pa - 1 } else { pa };
+    return cut_type(s, i + 1, b, p);
+}
+
+// A behavior: through the brace that closes its block.
+Str cut_block(Str s, Int i, Int br, Bool opened) {
+    if (i >= str_len(s)) { return str_trim(s); }
+    Int c = str_char_at(s, i);
+    Int b = if (c == 123) { br + 1 } else if (c == 125) { br - 1 } else { br };
+    if (c == 125 && b == 0 && opened) { return str_slice(s, 0, i + 1); }
+    return cut_block(s, i + 1, b, opened || c == 123);
+}
+
+Bool ident_char(Int c) { return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95; }
+
+Str word_at(Str s, Int i) { return str_slice(s, i, ident_end(s, i)); }
+
+Int ident_end(Str s, Int i) {
+    if (i >= str_len(s) || !ident_char(str_char_at(s, i))) { return i; }
+    return ident_end(s, i + 1);
+}
+
+// After `(` at i, the position past its matching `)`.
+Int skip_parens(Str s, Int i, Int depth) {
+    if (i >= str_len(s)) { return i; }
+    Int c = str_char_at(s, i);
+    Int d = if (c == 40) { depth + 1 } else if (c == 41) { depth - 1 } else { depth };
+    if (d == 0) { return i + 1; }
+    return skip_parens(s, i + 1, d);
+}
+
+Int skip_type(Str s, Int i) {
+    Int e = ident_end(s, i);
+    return if (e < str_len(s) && str_char_at(s, e) == 40) { skip_parens(s, e, 0) } else { e };
+}
+
+Int skip_spaces(Str s, Int i) {
+    if (i < str_len(s) && str_char_at(s, i) == 32) { return skip_spaces(s, i + 1); }
+    return i;
+}
+
+// `Ret name(` or `Ret closure(P) name(`: the name after the return type.
+Str fn_name(Str s) {
+    Int t = skip_spaces(s, skip_type(s, 0));
+    Str w = word_at(s, t);
+    Int t2 = if (w == "closure") { skip_spaces(s, skip_parens(s, ident_end(s, t), 0)) } else { t };
+    return word_at(s, t2);
+}
+
+// The families an `@requires(...)` line names: `filesystem(readonly)` is
+// `filesystem`.
+List(Str) caps_of(List(Str) anns, Int i, ListBuf(Str) acc) {
+    if (i >= anns.len()) { return acc.finish(); }
+    Str a = anns[i];
+    if (!str_starts_with(a, "@requires(")) { return caps_of(anns, i + 1, acc); }
+    Str inner = str_slice(a, 10, str_len(str_trim(a)) - 1);
+    return caps_of(anns, i + 1, cap_names(split_top(inner, 0, 0, 0, ListBuf()), 0, acc));
+}
+
+ListBuf(Str) cap_names(List(Str) parts, Int i, ListBuf(Str) acc) {
+    if (i >= parts.len()) { return acc; }
+    Str p = str_trim(parts[i]);
+    Int paren = str_index_of(p, "(", 0);
+    Str fam = if (paren < 0) { p } else { str_slice(p, 0, paren) };
+    return cap_names(parts, i + 1, if (fam == "") { acc } else { acc.push(fam) });
+}
+
+// `s` split at the commas outside parentheses.
+List(Str) split_top(Str s, Int i, Int start, Int depth, ListBuf(Str) acc) {
+    if (i >= str_len(s)) { return acc.push(str_slice(s, start, i)).finish(); }
+    Int c = str_char_at(s, i);
+    if (c == 44 && depth == 0) { return split_top(s, i + 1, i + 1, depth, acc.push(str_slice(s, start, i))); }
+    Int d = if (c == 40) { depth + 1 } else if (c == 41) { depth - 1 } else { depth };
+    return split_top(s, i + 1, start, d, acc);
+}
+
+// ─── Pages ──────────────────────────────────────────────────────────────
+
+/// The page for `slug` when it is an API page: a module, or the index
+/// at `api`; `base` prefixes the index's links.
+pub Option(PageMeta) api_page(List(ApiMod) ms, Str source, Str base, Str slug) {
+    if (ms.len() == 0) { return None; }
+    if (slug == "api") { return Some(index_page(ms, base)); }
+    return api_page_at(ms, source, slug, 0);
+}
+
+Option(PageMeta) api_page_at(List(ApiMod) ms, Str source, Str slug, Int i) {
+    if (i >= ms.len()) { return None; }
+    if (ms[i].slug == slug) { return Some(module_page(ms[i], source)); }
+    return api_page_at(ms, source, slug, i + 1);
+}
+
+PageMeta meta(Str slug, Str title, Str description, Str body) {
+    return PageMeta { .slug = slug, .title = title, .description = description, .tagline = "", .splash = false, .image = "", .actions = [], .body = body };
+}
+
+/// The module's page: its import line, overview, then its types,
+/// behaviors and functions, each with its declaration and doc comment.
+pub PageMeta module_page(ApiMod m, Str source) {
+    StrBuf b = StrBuf().push("```resid\nimport \"" + m.import + "\";\n```\n\n");
+    StrBuf b1 = if (m.intro == "") { b } else { b.push(m.intro).push("\n\n") };
+    StrBuf b2 = section(b1, m, "type", "Types", source);
+    StrBuf b3 = section(b2, m, "behavior", "Behaviors", source);
+    StrBuf b4 = section(b3, m, "fn", "Functions", source);
+    return meta(m.slug, m.import, m.summary, b4.finish());
+}
+
+StrBuf section(StrBuf b, ApiMod m, Str kind, Str title, Str source) {
+    List(ApiItem) xs = of_kind(m.items, kind, 0, ListBuf());
+    if (xs.len() == 0) { return b; }
+    return items_md(b.push("## " + title + "\n\n"), xs, m, source, 0);
+}
+
+List(ApiItem) of_kind(List(ApiItem) xs, Str kind, Int i, ListBuf(ApiItem) acc) {
+    if (i >= xs.len()) { return acc.finish(); }
+    return of_kind(xs, kind, i + 1, if (xs[i].kind == kind) { acc.push(xs[i]) } else { acc });
+}
+
+StrBuf items_md(StrBuf b, List(ApiItem) xs, ApiMod m, Str source, Int i) {
+    if (i >= xs.len()) { return b; }
+    ApiItem x = xs[i];
+    Str link = if (source == "") { "" } else { "[Source](" + source + m.import + "#L" + f"{x.line}" + ")\n\n" };
+    Str doc = if (x.doc == "") { "" } else { x.doc + "\n\n" };
+    StrBuf b2 = b.push("### `" + x.name + "`\n\n```resid\n" + x.decl + "\n```\n\n" + doc + link);
+    return items_md(b2, xs, m, source, i + 1);
+}
+
+/// The index page: every module with its summary, by directory, then
+/// the functions that need each capability family.
+pub PageMeta index_page(List(ApiMod) ms, Str base) {
+    List(Str) groups = groups_of(ms, 0, []);
+    StrBuf b = StrBuf().push("Every module, generated from its source: the overview is the module's header comment, and each declaration is listed with its `///` documentation.\n\n");
+    StrBuf b2 = groups_md(b, ms, groups, base, 0);
+    StrBuf b3 = caps_md(b2.push("## By capability\n\nThe functions whose `@requires` names each family. Everything else needs no capability.\n\n"), ms, cap_families(ms, 0, []), base, 0);
+    return meta("api", "API reference", "Every module, generated from its doc comments.", b3.finish());
+}
+
+List(Str) groups_of(List(ApiMod) ms, Int i, List(Str) acc) {
+    if (i >= ms.len()) { return acc; }
+    return groups_of(ms, i + 1, if (list_has(acc, ms[i].group, 0)) { acc } else { acc.concat([ms[i].group]) });
+}
+
+Bool list_has(List(Str) xs, Str x, Int i) {
+    if (i >= xs.len()) { return false; }
+    if (xs[i] == x) { return true; }
+    return list_has(xs, x, i + 1);
+}
+
+StrBuf groups_md(StrBuf b, List(ApiMod) ms, List(Str) gs, Str base, Int i) {
+    if (i >= gs.len()) { return b; }
+    Str title = if (gs[i] == "") { "Modules" } else { "`" + gs[i] + "`" };
+    StrBuf b2 = mods_md(b.push("## " + title + "\n\n| Module | |\n|---|---|\n"), ms, gs[i], base, 0);
+    return groups_md(b2.push("\n"), ms, gs, base, i + 1);
+}
+
+StrBuf mods_md(StrBuf b, List(ApiMod) ms, Str g, Str base, Int i) {
+    if (i >= ms.len()) { return b; }
+    ApiMod m = ms[i];
+    StrBuf b2 = if (m.group == g) { b.push("| [`" + m.import + "`](" + base + "/" + m.slug + "/) | " + cell(m.summary) + " |\n") } else { b };
+    return mods_md(b2, ms, g, base, i + 1);
+}
+
+Str cell(Str s) { return str_replace(s, "|", "\\|"); }
+
+List(Str) cap_families(List(ApiMod) ms, Int i, List(Str) acc) {
+    if (i >= ms.len()) { return sort(acc); }
+    return cap_families(ms, i + 1, item_caps(ms[i].items, 0, acc));
+}
+
+List(Str) item_caps(List(ApiItem) xs, Int i, List(Str) acc) {
+    if (i >= xs.len()) { return acc; }
+    return item_caps(xs, i + 1, add_new(xs[i].caps, 0, acc));
+}
+
+List(Str) add_new(List(Str) cs, Int i, List(Str) acc) {
+    if (i >= cs.len()) { return acc; }
+    return add_new(cs, i + 1, if (list_has(acc, cs[i], 0)) { acc } else { acc.concat([cs[i]]) });
+}
+
+StrBuf caps_md(StrBuf b, List(ApiMod) ms, List(Str) fams, Str base, Int i) {
+    if (i >= fams.len()) { return b; }
+    StrBuf b2 = cap_users(b.push("### `" + fams[i] + "`\n\n"), ms, fams[i], base, 0);
+    return caps_md(b2.push("\n\n"), ms, fams, base, i + 1);
+}
+
+StrBuf cap_users(StrBuf b, List(ApiMod) ms, Str fam, Str base, Int i) {
+    if (i >= ms.len()) { return b; }
+    return cap_users(cap_items(b, ms[i], fam, base, 0), ms, fam, base, i + 1);
+}
+
+StrBuf cap_items(StrBuf b, ApiMod m, Str fam, Str base, Int j) {
+    if (j >= m.items.len()) { return b; }
+    ApiItem x = m.items[j];
+    Bool hit = x.kind == "fn" && list_has(x.caps, fam, 0);
+    StrBuf b2 = if (hit) { b.push("[`" + m.import + "` " + x.name + "](" + base + "/" + m.slug + "/#" + slug_of(x.name) + ") · ") } else { b };
+    return cap_items(b2, m, fam, base, j + 1);
+}
+
+// ─── The nav ────────────────────────────────────────────────────────────
+
+/// The nav entries of the reference: a topic, the index, then a group per
+/// directory with its modules.
+pub List(NavItem) api_nav(List(ApiMod) ms) {
+    if (ms.len() == 0) { return []; }
+    List(Str) gs = groups_of(ms, 0, []);
+    ListBuf(NavItem) head = ListBuf();
+    return nav_groups(ms, gs, 0, head.push(NTopic("API", "api")).push(NGroup("API reference")).push(NPage("api")));
+}
+
+List(NavItem) nav_groups(List(ApiMod) ms, List(Str) gs, Int i, ListBuf(NavItem) acc) {
+    if (i >= gs.len()) { return acc.finish(); }
+    Str label = if (gs[i] == "") { "Modules" } else { gs[i] };
+    return nav_groups(ms, gs, i + 1, nav_mods(ms, gs[i], 0, acc.push(NGroup(label))));
+}
+
+ListBuf(NavItem) nav_mods(List(ApiMod) ms, Str g, Int i, ListBuf(NavItem) acc) {
+    if (i >= ms.len()) { return acc; }
+    return nav_mods(ms, g, i + 1, if (ms[i].group == g) { acc.push(NPage(ms[i].slug)) } else { acc });
+}

@@ -110,12 +110,31 @@ check "highlighted comment" '<span class="c">' "$(body /intro/)"
 check "highlighted keyword" '<span class="k">' "$(body /intro/)"
 check "code block title" "<figcaption>Output</figcaption>" "$(body /intro/)"
 
+# ── The API reference, generated from examples/sample/api ──────────────
+checkr "api index" 200 "/api/"
+checkr "api module" 200 "/api/shapes/"
+checkr "api module in a sub-directory" 200 "/api/dev/probe/"
+check "api index links a module" 'href="/api/shapes/"' "$(body /api/)"
+check "api index summary from the header title" "Shapes and their areas" "$(body /api/)"
+check "api index summary of a generated module" "Probing a pretend device" "$(body /api/)"
+check "api index by capability" 'href="/api/shapes/#shapes_read"' "$(body /api/)"
+check "api import line" '<span class="s">&quot;shapes.resid&quot;</span>' "$(body /api/shapes/)"
+check "api overview" "second paragraph is part of the overview" "$(body /api/shapes/)"
+check "api type listed" 'id="point"' "$(body /api/shapes/)"
+check "api behavior listed" 'id="area"' "$(body /api/shapes/)"
+check "api function doc" "in square units" "$(body /api/shapes/)"
+check "api annotation shown" '@requires</span>(filesystem(readonly))' "$(body /api/shapes/)"
+check "api multi-line signature" 'Str</span> path)' "$(body /api/shapes/)"
+check "api source link" 'href="https://example.com/src/shapes.resid#L22"' "$(body /api/shapes/)"
+if body /api/shapes/ | grep -q "helper"; then bad "a private function reached the API page"; else ok; fi
+check "api topic in the nav" 'href="/api/"' "$(body /intro/)"
+
 # ── The static export: assets, nested included ─────────────────────────
 # The export must copy the book's asset directories whole, and must not
 # re-read the top level while descending (which wrote 0-byte files).
 rm -rf "$T/dist"
 if "$T/resid-book" export examples/sample/book.toml "$T/dist" >/dev/null 2>&1; then
-    for f in index.html intro/index.html numbers/index.html mascot.svg nested.svg img/mark.svg book.js; do
+    for f in index.html intro/index.html numbers/index.html api/index.html api/shapes/index.html api/dev/probe/index.html mascot.svg nested.svg img/mark.svg book.js; do
         [ -s "$T/dist/$f" ] && ok || bad "export missing or empty: $f"
     done
     # Search works without a server: the index ships beside the pages, and
@@ -142,6 +161,7 @@ search() {
     curl -s -H 'Datastar-Request: true' "http://127.0.0.1:$PORT/ui/search?datastar=$sig"
 }
 check "search finds a page" "Numbers" "$(search decimals)"
+check "search finds api docs" "shapes.resid" "$(search 'square units')"
 check "search emits a patch event" "datastar-patch-elements" "$(search decimals)"
 # Every word must match, in any order; a word on no page matches nothing.
 check "search matches all words" "Numbers" "$(search 'decimals numbers')"
