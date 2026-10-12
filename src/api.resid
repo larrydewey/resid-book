@@ -345,8 +345,19 @@ StrBuf items_md(StrBuf b, List(ApiItem) xs, ApiMod m, Str source, Int i) {
     ApiItem x = xs[i];
     Str link = if (source == "") { "" } else { "[Source](" + source + m.import + "#L" + f"{x.line}" + ")\n\n" };
     Str doc = if (x.doc == "") { "" } else { x.doc + "\n\n" };
-    StrBuf b2 = b.push("### `" + x.name + "`\n\n```resid\n" + x.decl + "\n```\n\n" + doc + link);
+    // A type or behavior named like a function of the module (`Regex` and
+    // `regex`) would share its anchor; the function keeps the plain one.
+    Bool clash = x.kind != "fn" && fn_named(m.items, str_to_lower(x.name), 0);
+    Str tag = if (clash) { " (" + x.kind + ")" } else { "" };
+    StrBuf b2 = b.push("### `" + x.name + "`" + tag + "\n\n```resid\n" + x.decl + "\n```\n\n" + doc + link);
     return items_md(b2, xs, m, source, i + 1);
+}
+
+// Whether a function of `xs` is named `lname` in lower case.
+Bool fn_named(List(ApiItem) xs, Str lname, Int i) {
+    if (i >= xs.len()) { return false; }
+    if (xs[i].kind == "fn" && str_to_lower(xs[i].name) == lname) { return true; }
+    return fn_named(xs, lname, i + 1);
 }
 
 /// The index page: every module with its summary, by directory, then
