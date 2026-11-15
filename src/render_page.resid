@@ -121,11 +121,11 @@ pub Str sidebar(Ctx c, Str slug) {
     List(NavItem) slice = topic_slice(c.b.nav, slug);
     Str switcher = topic_switcher(c, slug);
     if (slice.len() == 0) {
-        return "<aside class=\"side\">" + switcher + "<div class=\"topic\">Contents</div>" + topic_links(c.b.nav, 0, StrBuf()) + "</aside>";
+        return "<aside class=\"side\" id=\"nav\" aria-label=\"Book contents\">" + switcher + "<div class=\"topic\">Contents</div>" + topic_links(c.b.nav, 0, StrBuf()) + "</aside>";
     }
     Str label = topic_label_of(c.b.nav, slug);
     Str head = if (label == "") { "" } else { "<div class=\"topic\">" + h_esc(label) + "</div>" };
-    return "<aside class=\"side\">" + switcher + head + nav_links(c, slug, slice, 0, StrBuf()) + "</aside>";
+    return "<aside class=\"side\" id=\"nav\" aria-label=\"Book contents\">" + switcher + head + nav_links(c, slug, slice, 0, StrBuf()) + "</aside>";
 }
 
 pub List(Heading) empty_headings() { return []; }
@@ -141,28 +141,39 @@ pub Str toc_rows(List(Heading) hs, Int i, StrBuf b) {
 
 pub Str toc_html(List(Heading) hs) {
     if (hs.len() == 0) { return ""; }
-    return "<aside class=\"toc\"><h2>On this page</h2>" + toc_rows(hs, 0, StrBuf()) + "</aside>";
+    return "<aside class=\"toc\" aria-label=\"On this page\"><h2>On this page</h2><nav>" + toc_rows(hs, 0, StrBuf()) + "</nav></aside>";
+}
+
+// The same list at the head of the page, folded, for screens too narrow
+// for the third column (the stylesheet shows one or the other).
+pub Str toc_inline(List(Heading) hs) {
+    if (hs.len() < 2) { return ""; }
+    return "<details class=\"toc-inline\"><summary>On this page</summary><nav>" + toc_rows(hs, 0, StrBuf()) + "</nav></details>";
 }
 
 pub Str pager(Ctx c, Str slug) {
     Str prev = nav_prev(c.pages, slug);
     Str next = nav_next(c.pages, slug);
     if (prev == "" && next == "") { return ""; }
-    Str p = if (prev == "") { "<span></span>" } else { "<a href=\"" + book_url(prev, c.b.base) + "\">&larr; " + h_esc(title_of(c, prev)) + "</a>" };
-    Str n = if (next == "") { "<span></span>" } else { "<a class=\"r\" href=\"" + book_url(next, c.b.base) + "\">" + h_esc(title_of(c, next)) + " &rarr;</a>" };
-    return "<nav class=\"pager\">" + p + n + "</nav>";
+    Str p = if (prev == "") { "<span></span>" } else { "<a rel=\"prev\" href=\"" + book_url(prev, c.b.base) + "\"><span class=\"lbl\">&larr; Previous</span>" + h_esc(title_of(c, prev)) + "</a>" };
+    Str n = if (next == "") { "<span></span>" } else { "<a class=\"r\" rel=\"next\" href=\"" + book_url(next, c.b.base) + "\"><span class=\"lbl\">Next &rarr;</span>" + h_esc(title_of(c, next)) + "</a>" };
+    return "<nav class=\"pager\" aria-label=\"Previous and next\">" + p + n + "</nav>";
 }
 
 pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
     Str base = c.b.base;
     Str client = if (c.mode == "export") { "" } else { ds_script_tag() };
-    Str repolink = if (c.b.repository == "") { "" } else { "<a class=\"repo\" href=\"" + h_esc(c.b.repository) + "\">GitHub</a>" };
+    Str repolink = repo_link(c.b.repository);
     return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         + "<title>" + h_esc(if (slug == "") { c.b.title } else { title_of(c, slug) + " - " + c.b.title }) + "</title>"
         + "<meta name=\"description\" content=\"" + h_esc(desc_of(c, slug)) + "\">"
-        + "<style>" + theme_css() + "</style>" + book_script(c, base) + client
-        + "</head><body" + body_attrs(c) + ">"
+        + "<style>" + theme_css() + "</style>"
+        // Before anything is painted, so a reader's chosen theme does not flash.
+        + "<script src=\"" + base + "/theme.js\"></script>"
+        + book_script(c, base) + client
+        + "</head><body>"
+        + "<a class=\"skip\" href=\"#content\">Skip to content</a>"
         + backdrop(c)
         + "<header class=\"top\">"
         + hamburger(c)
@@ -170,9 +181,9 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
         + "<span class=\"grow\"></span>"
         + search_box(c, base)
         + repolink
-        + "<button class=\"icon\" id=\"theme-toggle\" aria-label=\"Theme\">&#9681;</button>"
+        + "<button class=\"btn-i\" id=\"theme-toggle\" type=\"button\" aria-label=\"Switch between light and dark theme\" title=\"Light or dark\">" + icon_moon() + icon_sun() + "</button>"
         + "</header>"
-        + "<div class=\"shell" + (if (toc.len() == 0) { " no-toc" } else { "" }) + "\">" + sidebar(c, slug) + "<main><div class=\"main" + (if (wide) { " wide" } else { "" }) + "\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
+        + "<div class=\"shell" + (if (toc.len() == 0) { " no-toc" } else { "" }) + "\">" + sidebar(c, slug) + "<main id=\"content\"><div class=\"main" + (if (wide) { " wide" } else { "" }) + "\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
         + "</body></html>";
 }
 
@@ -185,28 +196,52 @@ pub Str book_script(Ctx c, Str base) {
     return index + "<script src=\"" + base + "/book.js\" defer></script>";
 }
 
+// The drawer is `book.js`'s alone, served or exported: one owner for
+// `data-nav`, so a key or a followed link can close it without a signal
+// and the page disagreeing about whether it is open.
 pub Str hamburger(Ctx c) {
-    Str on = if (c.mode == "export") { "" } else { " data-on:click=\"$nav = $nav == 'open' ? '' : 'open'\"" };
-    return "<button class=\"hamburger\" aria-label=\"Menu\" id=\"nav-toggle\"" + on + ">&#9776;</button>";
+    return "<button class=\"btn-i hamburger\" type=\"button\" aria-label=\"Menu\" aria-controls=\"nav\" aria-expanded=\"false\" id=\"nav-toggle\">" + icon_menu() + "</button>";
 }
 
 pub Str backdrop(Ctx c) {
-    Str on = if (c.mode == "export") { "" } else { " data-on:click=\"$nav=''\"" };
-    return "<div class=\"backdrop\" id=\"nav-backdrop\"" + on + "></div>";
+    return "<div class=\"backdrop\" id=\"nav-backdrop\"></div>";
 }
 
-pub Str body_attrs(Ctx c) {
-    if (c.mode == "export") { return ""; }
-    return " data-signals=\"{nav:''}\" data-attr:data-nav=\"$nav\"";
+// The repository link: the GitHub mark for a GitHub URL, a code glyph for
+// any other host. The word beside it is hidden on a phone.
+pub Str repo_link(Str url) {
+    if (url == "") { return ""; }
+    Bool gh = str_contains(url, "github.com");
+    Str icon = if (gh) { icon_github() } else { icon_code() };
+    Str word = if (gh) { "GitHub" } else { "Source" };
+    return "<a class=\"btn-i repo\" href=\"" + h_esc(url) + "\" aria-label=\"" + word + "\">" + icon + "<span>" + word + "</span></a>";
 }
+
+// ─── Icons (inline, so they take the text colour and need no request) ──
+
+Str svg24(Str cls, Str body) {
+    return "<svg" + (if (cls == "") { "" } else { " class=\"" + cls + "\"" }) + " viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">" + body + "</svg>";
+}
+
+pub Str icon_menu() { return svg24("", "<path d=\"M4 7h16M4 12h16M4 17h16\"/>"); }
+pub Str icon_moon() { return svg24("i-moon", "<path d=\"M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z\"/>"); }
+pub Str icon_sun() { return svg24("i-sun", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>"); }
+pub Str icon_search() { return svg24("sicon", "<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-3.5-3.5\"/>"); }
+pub Str icon_code() { return svg24("", "<path d=\"m8 6-6 6 6 6M16 6l6 6-6 6\"/>"); }
+pub Str icon_github() {
+    return "<svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/></svg>";
+}
+
+// The magnifier, and the `/` key that focuses the box (hidden once typing).
+Str search_hint() { return icon_search() + "<kbd>/</kbd>"; }
 
 pub Str search_box(Ctx c, Str base) {
     // A static export searches in the browser, from `search.js`.
     if (c.mode == "export") {
-        return "<div class=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search\"><div id=\"search-results\" class=\"results\" hidden></div></div>";
+        return "<div class=\"search\" role=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search the book\" autocomplete=\"off\">" + search_hint() + "<div id=\"search-results\" class=\"results\" hidden></div></div>";
     }
-    return "<div class=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search\" data-bind:q data-on:input__debounce.200ms=\"@get('"
-        + base + "/ui/search')\"><div id=\"search-results\" class=\"results\" data-show=\"false\"></div></div>";
+    return "<div class=\"search\" role=\"search\"><input type=\"search\" placeholder=\"Search\" aria-label=\"Search the book\" autocomplete=\"off\" data-bind:q data-on:input__debounce.200ms=\"@get('"
+        + base + "/ui/search')\">" + search_hint() + "<div id=\"search-results\" class=\"results\" data-show=\"false\"></div></div>";
 }
 
 // The whole document for a page: what the server would answer with.
@@ -251,6 +286,7 @@ pub Str page_main(Ctx c, PageMeta m) {
     Str edit = if (f == "") { "" } else { "<p class=\"edit\"><a href=\"" + h_esc(c.b.edit_base + strip_book_dir(f, c.b.dir)) + "\">Edit this page</a></p>" };
     Str page = "<h1>" + h_esc(m.title) + "</h1>"
         + (if (m.description != "") { "<p class=\"lead\">" + h_esc(m.description) + "</p>" } else { "" })
+        + toc_inline(toc_of(m))
         + body + edit + pager(c, m.slug);
     return expand_assets(c.assets, page);
 }

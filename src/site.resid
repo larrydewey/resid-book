@@ -18,22 +18,11 @@ import "search.resid";
 import "export.resid";
 import "render_page.resid";
 import "theme.resid";
+import "client.resid";
 
 // ─── Assets ─────────────────────────────────────────────────────────────
 
-pub Str book_js() {
-    return "(function(){var d=document.documentElement,t=localStorage.getItem('theme')||'';"
-        + "if(t)d.dataset.theme=t;"
-        + "var b=document.getElementById('theme-toggle');"
-        + "if(b)b.addEventListener('click',function(){var c=d.dataset.theme==='dark'?'light':'dark';d.dataset.theme=c;localStorage.setItem('theme',c);});"
-        + "var n=document.getElementById('nav-toggle'),v=document.getElementById('nav-backdrop');"
-        + "function set(o){document.body.dataset.nav=o?'open':'';}"
-        + "if(n)n.addEventListener('click',function(){set(document.body.dataset.nav!=='open');});"
-        + "if(v)v.addEventListener('click',function(){set(false);});"
-        + "document.addEventListener('keydown',function(e){if(e.key==='/'&&e.target.tagName!=='INPUT'){var i=document.querySelector('.search input');if(i){e.preventDefault();i.focus();}}});"
-        + search_js()
-        + "})();";
-}
+// `book.js` and `theme.js` are in client.resid.
 
 // ─── Routing ────────────────────────────────────────────────────────────
 
@@ -65,7 +54,8 @@ HttpOut(Int) route(Ctx c, HttpRequest r) {
     Str base = c.b.base;
     Str p = strip_base(r.path, base);
     if (p == "/book.js" || p == "/theme.js") {
-        HttpReply js = http_reply_text(200, "text/javascript; charset=utf-8", book_js());
+        Str src = if (p == "/theme.js") { theme_js() } else { book_js() };
+        HttpReply js = http_reply_text(200, "text/javascript; charset=utf-8", src);
         return Whole(http_with_header(js, "Cache-Control", "max-age=3600"));
     }
     if (p == "/ui/search") {
@@ -135,6 +125,8 @@ Int cmd_export(Int argc) {
     Bool assets = export_assets(c, out, str_split(c.assets, ","), 0);
     // The theme and drawer script, so the static pages stay interactive.
     filesystem.write_all(out + "/book.js", book_js());
+    // Set in <head> before the first paint, so a chosen theme never flashes.
+    filesystem.write_all(out + "/theme.js", theme_js());
     // The search index, searched in the browser by `book.js`.
     filesystem.write_all(out + "/search.js", search_index_js(c.docs, c.b.base));
     // GitHub Pages skips directories beginning with `_`; `.nojekyll` opts

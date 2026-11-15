@@ -67,9 +67,24 @@ Markdown is only half a page, so the server adds the rest:
   each shows a snippet with the words marked. Served, a Datastar request patches the results into the search
   box; exported, the index ships as `search.js` and the browser searches
   it, so a static host (or a page opened from disk) searches too;
-- **a theme toggle** and an **off-canvas sidebar** on small screens;
+  The results answer the keyboard: `/` or Ctrl+K (Cmd+K) focuses the box,
+  the arrow keys pick a hit, Enter follows it and Escape puts the list away;
+- **a theme** that follows the operating system until the reader picks one
+  with the toggle; the choice is remembered and set before the first paint,
+  so a dark page never flashes light;
+- **an off-canvas sidebar** on small screens (Escape or a followed link
+  closes it), and the on-this-page list folded at the head of the page
+  where there is no room for its column;
 - **code fences highlighted** — comments, strings, numbers, keywords and
-  type-like names, with a block title (` ```text title="Output" `).
+  type-like names, with a block title (` ```text title="Output" `) — and a
+  *Copy* button on each;
+- **reading aids** — a `#` link beside each section heading, the section
+  being read marked in the on-this-page list, wide tables that scroll in
+  their own box, a skip-to-content link, visible keyboard focus, and a
+  print stylesheet without the chrome.
+
+Every page is whole without scripts: the sidebar, the table of contents and
+the links are all markup, and `book.js` only adds to them.
 
 ### The MDX the docs use
 
@@ -148,6 +163,7 @@ Against a full Starlight install, these are still missing:
 | `src/search.resid` | the search index and the live results |
 | `src/api.resid` | the API reference, generated from a source tree |
 | `src/theme.resid` | the stylesheet |
+| `src/client.resid` | the browser scripts, `theme.js` and `book.js` |
 | `examples/sample/` | a book that exercises all of it |
 | `tests/run.sh` | the suite: build, serve, and check the routes |
 | `tests/search_parity.js` | the exported search in node, compared with the server's |
