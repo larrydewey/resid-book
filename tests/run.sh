@@ -109,6 +109,19 @@ check "previous/next pager" "class=\"pager\"" "$(body /intro/)"
 check "highlighted comment" '<span class="c">' "$(body /intro/)"
 check "highlighted keyword" '<span class="k">' "$(body /intro/)"
 check "code block title" "<figcaption>Output</figcaption>" "$(body /intro/)"
+# The page's furniture: a skip link to the content, labelled pager links,
+# the folded table of contents for narrow screens, and a theme toggle with
+# a name. The OS preference picks the colours until the reader chooses.
+check "skip link" 'href="#content">Skip to content' "$(body /intro/)"
+check "main is the skip target" '<main id="content">' "$(body /intro/)"
+check "pager labels its links" 'class="lbl">' "$(body /intro/)"
+check "folded table of contents" '<details class="toc-inline">' "$(body /intro/)"
+check "theme toggle is named" 'id="theme-toggle" type="button" aria-label=' "$(body /intro/)"
+check "dark colours follow the OS" ':root:not(.data-theme=light.){--bg:#131316' "$(body /intro/)"
+check "drawer toggle reports its state" 'aria-expanded="false" id="nav-toggle"' "$(body /intro/)"
+check "theme script sets the saved theme" "localStorage.getItem('theme')" "$(body /theme.js)"
+check "book script copies code" "className='copy'" "$(body /book.js)"
+check "book script marks the section being read" "aria-current','location'" "$(body /book.js)"
 
 # ── The API reference, generated from examples/sample/api ──────────────
 checkr "api index" 200 "/api/"
@@ -142,7 +155,10 @@ if "$T/resid-book" export examples/sample/book.toml "$T/dist" >/dev/null 2>&1; t
     check "export search index" '"t":"Numbers"' "$(cat "$T/dist/search.js")"
     check "export index holds body text" 'decimals' "$(cat "$T/dist/search.js")"
     check "export page loads the index" '/search.js" defer' "$(cat "$T/dist/intro/index.html")"
-    check "export page has a search box" 'class="search"><input' "$(cat "$T/dist/intro/index.html")"
+    check "export page has a search box" 'class="search" role="search"><input' "$(cat "$T/dist/intro/index.html")"
+    # The theme is set before the first paint, from a script of its own.
+    [ -s "$T/dist/theme.js" ] && ok || bad "export missing or empty: theme.js"
+    check "export page sets the theme early" '<script src="/theme.js"></script>' "$(cat "$T/dist/intro/index.html")"
     check "export search runs in the browser" 'BOOK_SEARCH' "$(cat "$T/dist/book.js")"
     # .nojekyll is a marker: it must exist, and must be empty.
     [ -f "$T/dist/.nojekyll" ] && ok || bad "export missing: .nojekyll"

@@ -1,0 +1,119 @@
+// src/client.resid — the browser half of a book: the scripts every page
+// loads, served at `/theme.js` and `/book.js` and written beside an export.
+//
+// None of it is needed to read a page. Without scripts a book is still
+// whole: the links, the sidebar and the table of contents are all markup.
+
+import "search.resid";
+
+// Loaded in <head> without `defer`, so the reader's chosen theme is set
+// before the first paint and a dark page never flashes light. With no
+// choice saved, the stylesheet follows the operating system.
+pub Str theme_js() {
+    return "(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;}catch(e){}})();";
+}
+
+// The toggle, the drawer, the keyboard, and the export's search.
+pub Str book_js() {
+    return "(function(){var d=document.documentElement;"
+        + theme_toggle_js()
+        + drawer_js()
+        + search_js()
+        + "if(document.querySelectorAll){" + enhance_js() + "}"
+        + "})();";
+}
+
+// The toggle flips whatever is showing: the saved choice, or else the
+// operating system's.
+Str theme_toggle_js() {
+    return "function isDark(){var t=d.dataset.theme;if(t)return t==='dark';return !!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);}"
+        + "var tb=document.getElementById('theme-toggle');"
+        + "if(tb)tb.addEventListener('click',function(){var c=isDark()?'light':'dark';d.dataset.theme=c;try{localStorage.setItem('theme',c);}catch(e){}});";
+}
+
+// The off-canvas sidebar on a phone. `/` or Ctrl+K (Cmd+K) focuses the
+// search; Escape closes the drawer.
+Str drawer_js() {
+    return "var nt=document.getElementById('nav-toggle'),nb=document.getElementById('nav-backdrop');"
+        + "function setNav(o){document.body.dataset.nav=o?'open':'';if(nt)nt.setAttribute('aria-expanded',o?'true':'false');}"
+        + "if(nt)nt.addEventListener('click',function(){setNav(document.body.dataset.nav!=='open');});"
+        + "if(nb)nb.addEventListener('click',function(){setNav(false);});"
+        + "document.addEventListener('keydown',function(e){var g=e.target||{},typing=g.tagName==='INPUT'||g.tagName==='TEXTAREA'||g.isContentEditable;"
+        + "if((e.key==='/'&&!typing)||((e.key==='k'||e.key==='K')&&(e.metaKey||e.ctrlKey))){var i=document.querySelector('.search input');if(i){e.preventDefault();i.focus();i.select();}}"
+        + "else if(e.key==='Escape'&&document.body.dataset.nav==='open'){setNav(false);if(nt)nt.focus();}});";
+}
+
+// What a page gains once the DOM is there (book.js is deferred).
+Str enhance_js() {
+    return "function all(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));}"
+        + sidebar_js()
+        + search_keys_js()
+        + anchors_js()
+        + copy_js()
+        + tables_js()
+        + scrollspy_js();
+}
+
+// The current page is in view in a long sidebar (its own link, a child of
+// the aside; the topic pill above is marked too), and following a link in
+// the drawer closes it.
+Str sidebar_js() {
+    return "var side=document.querySelector('aside.side');"
+        + "if(side){var cur=side.querySelector(':scope>a.on');"
+        + "if(cur&&cur.offsetTop+cur.offsetHeight>side.clientHeight-24)side.scrollTop=cur.offsetTop-side.clientHeight/3;"
+        + "side.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('a'))setNav(false);});}"
+        + "all('details.toc-inline a').forEach(function(a){a.addEventListener('click',function(){var t=a.closest('details');if(t)t.open=false;});});";
+}
+
+// The results, served (patched in by Datastar) or exported (written by
+// `search_js`), answer the arrow keys and Enter; Escape or a click
+// elsewhere puts them away until the box is used again.
+Str search_keys_js() {
+    return "var sb=document.querySelector('.search'),si=sb&&sb.querySelector('input'),sr=document.getElementById('search-results'),sel=-1;"
+        + "if(sb&&si&&sr){"
+        + "var hits=function(){return all('a',sr);};"
+        + "var pick=function(k){hits().forEach(function(a,j){var on=j===k;a.classList.toggle('sel',on);if(on){a.setAttribute('aria-selected','true');a.scrollIntoView({block:'nearest'});}else a.removeAttribute('aria-selected');});sel=k;};"
+        + "si.addEventListener('focus',function(){sb.classList.remove('shut');});"
+        + "si.addEventListener('input',function(){sel=-1;sb.classList.remove('shut');});"
+        + "si.addEventListener('keydown',function(e){var h=hits();"
+        + "if(e.key==='ArrowDown'&&h.length){e.preventDefault();pick(sel+1<h.length?sel+1:0);}"
+        + "else if(e.key==='ArrowUp'&&h.length){e.preventDefault();pick(sel>0?sel-1:h.length-1);}"
+        + "else if(e.key==='Enter'&&h.length){e.preventDefault();sb.classList.add('shut');location.href=h[sel>=0?sel:0].href;}"
+        + "else if(e.key==='Escape'){sb.classList.add('shut');si.blur();}});"
+        + "document.addEventListener('click',function(e){if(!sb.contains(e.target))sb.classList.add('shut');});"
+        + "sr.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('a'))sb.classList.add('shut');});}";
+}
+
+// A `#` beside each section heading, to link to it.
+Str anchors_js() {
+    return "all('.main h2[id],.main h3[id]').forEach(function(h){if(h.closest('.card,.hero')||h.querySelector('.anchor'))return;"
+        + "var a=document.createElement('a');a.className='anchor';a.href='#'+h.id;a.setAttribute('aria-label','Link to this section');a.textContent='#';h.appendChild(a);});";
+}
+
+// A Copy button on every code block. The clipboard API needs a secure
+// context; a page opened from disk falls back to selecting the block.
+Str copy_js() {
+    return "all('.main pre').forEach(function(p){var w=document.createElement('div');w.className='pre-wrap';p.parentNode.insertBefore(w,p);w.appendChild(p);"
+        + "var b=document.createElement('button');b.type='button';b.className='copy';b.textContent='Copy';b.setAttribute('aria-label','Copy code');w.appendChild(b);"
+        + "var done=function(ok){b.textContent=ok?'Copied':'Select and copy';b.classList.add('done');setTimeout(function(){b.textContent='Copy';b.classList.remove('done');},1600);};"
+        + "var pickAll=function(){var r=document.createRange();r.selectNodeContents(p);var g=window.getSelection();g.removeAllRanges();g.addRange(r);var ok=false;try{ok=document.execCommand('copy');}catch(e){}if(ok)g.removeAllRanges();return ok;};"
+        + "b.addEventListener('click',function(){var s=p.innerText.trimEnd();"
+        + "if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(s).then(function(){done(true);},function(){done(pickAll());});else done(pickAll());});});";
+}
+
+// A wide table scrolls inside its own box instead of the whole page.
+Str tables_js() {
+    return "all('.main table').forEach(function(t){if(t.parentNode.classList.contains('table-wrap'))return;var w=document.createElement('div');w.className='table-wrap';t.parentNode.insertBefore(w,t);w.appendChild(t);});";
+}
+
+// The table of contents marks the section being read.
+Str scrollspy_js() {
+    return "var tl=all('aside.toc a');"
+        + "if(tl.length){var hs=tl.map(function(a){return document.getElementById(decodeURIComponent(a.hash.slice(1)));}),tick=0;"
+        + "var spy=function(){var k=-1,lim=(parseFloat(getComputedStyle(d).getPropertyValue('--hh'))||56)+40;"
+        + "for(var j=0;j<hs.length;j++){if(hs[j]&&hs[j].getBoundingClientRect().top<=lim)k=j;}"
+        + "if(window.innerHeight+window.scrollY>=d.scrollHeight-4&&k>=0)k=hs.length-1;"
+        + "tl.forEach(function(a,j){var on=j===k;a.classList.toggle('on',on);if(on)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');});};"
+        + "window.addEventListener('scroll',function(){if(!tick)tick=requestAnimationFrame(function(){tick=0;spy();});},{passive:true});"
+        + "window.addEventListener('resize',spy);spy();}";
+}
