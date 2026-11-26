@@ -32,6 +32,8 @@ content = "src/content/docs"    # the Markdown root
 assets = "src/assets,public"    # comma-separated directories
 repository = "https://github.com/larrydewey/Resid"
 edit_base = "https://github.com/larrydewey/Resid/edit/master/website/"
+logo = "logo.svg"               # optional: the header's logo, in colour
+logo_dark = "logo-dark.svg"     # optional: its twin for the dark theme
 
 nav = [
     "topic|Learn Resid|learn",  # start a topic (the sidebar's scope)
@@ -42,6 +44,14 @@ nav = [
     "page|reference"
 ]
 ```
+
+`logo` and `logo_dark` name files in the asset directories. A `logo` is
+drawn as it is in both themes, and is the browser tab's icon too; with a
+`logo_dark` beside it, that one is drawn in the dark theme instead.
+Without either, the header shows the asset `Logo.svg`, which is meant to
+be black on transparent and is inverted in the dark theme. A page can
+switch its own artwork with the theme the same way: an `<img>` with
+class `only-light` shows in the light theme, `only-dark` in the dark.
 
 The nav is a flat array of three-part strings so that it is readable by a
 human and parseable by thirty lines of code. A page's label in the sidebar

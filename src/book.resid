@@ -11,6 +11,10 @@
 // The whole book: its strings, and the flat nav that names the shape.
 pub type Book = {
     Str title; Str tagline; Str base; Str content; Str assets; Str edit_base; Str repository;
+    // The header's logo, an asset's name: drawn as it is in both themes,
+    // or `logo_dark` in its place in the dark one. Neither set: the
+    // monochrome `Logo.svg`, inverted in the dark theme.
+    Str logo; Str logo_dark;
     Str dir;
     List(NavItem) nav;
     Str api; Str api_dirs; Str api_source;
@@ -32,6 +36,8 @@ pub Book book_read(Str path) {
         .assets = bf(text, "assets"),
         .edit_base = bf(text, "edit_base"),
         .repository = bf(text, "repository"),
+        .logo = bf(text, "logo"),
+        .logo_dark = bf(text, "logo_dark"),
         .nav = nav_parse(nav_strings(text)),
         .api = bf(text, "api"),
         .api_dirs = bf(text, "api_dirs"),

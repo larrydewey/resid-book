@@ -16,14 +16,15 @@ Str dark_vars() {
 // What changes with the theme besides the colours: monochrome artwork is
 // inverted, and the toggle shows the sun (to go light) instead of the moon.
 Str dark_rules(Str scope) {
-    return scope + " .invert-dark{filter:invert(1)}" + scope + " .i-sun{display:block}" + scope + " .i-moon{display:none}";
+    return scope + " .invert-dark{filter:invert(1)}" + scope + " .i-sun{display:block}" + scope + " .i-moon{display:none}"
+        + scope + " .only-light{display:none}" + scope + " .only-dark{display:inline}";
 }
 
 pub Str theme_css() {
     return ":root{" + light_vars() + ";--hh:56px}"
         + "[data-theme=dark]{" + dark_vars() + "}"
         + "@media (prefers-color-scheme:dark){:root:not([data-theme=light]){" + dark_vars() + "}}"
-        + ".invert-dark{filter:none}.i-sun{display:none}"
+        + ".invert-dark{filter:none}.i-sun{display:none}.only-dark{display:none}"
         + dark_rules("[data-theme=dark]")
         + "@media (prefers-color-scheme:dark){" + dark_rules(":root:not([data-theme=light])") + "}"
 

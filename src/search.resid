@@ -31,7 +31,7 @@ pub Ctx ctx_load(Str book_toml) {
     Str root = if (b0.api == "") { "" } else { book_path(b0.dir, b0.api) };
     List(ApiMod) api = api_load(ApiCfg { .root = root, .dirs = str_split(b0.api_dirs, ","), .source = b0.api_source });
     Book b = Book { .title = b0.title, .tagline = b0.tagline, .base = b0.base, .content = b0.content, .assets = b0.assets,
-        .edit_base = b0.edit_base, .repository = b0.repository, .dir = b0.dir, .nav = b0.nav.concat(api_nav(api)),
+        .edit_base = b0.edit_base, .repository = b0.repository, .logo = b0.logo, .logo_dark = b0.logo_dark, .dir = b0.dir, .nav = b0.nav.concat(api_nav(api)),
         .api = b0.api, .api_dirs = b0.api_dirs, .api_source = b0.api_source };
     List(Str) pages = nav_pages(b.nav);
     Str content = book_path(b.dir, b.content);

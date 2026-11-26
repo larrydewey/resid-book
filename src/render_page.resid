@@ -168,6 +168,7 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
         + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         + "<title>" + h_esc(if (slug == "") { c.b.title } else { title_of(c, slug) + " - " + c.b.title }) + "</title>"
         + "<meta name=\"description\" content=\"" + h_esc(desc_of(c, slug)) + "\">"
+        + icon_link(c.b, base)
         + "<style>" + theme_css() + "</style>"
         // Before anything is painted, so a reader's chosen theme does not flash.
         + "<script src=\"" + base + "/theme.js\"></script>"
@@ -177,7 +178,7 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
         + backdrop(c)
         + "<header class=\"top\">"
         + hamburger(c)
-        + "<a class=\"brand\" href=\"" + base + "/\"><img class=\"invert-dark\" src=\"" + base + "/Logo.svg\" alt=\"\"><span>" + h_esc(c.b.title) + "</span></a>"
+        + "<a class=\"brand\" href=\"" + base + "/\">" + brand_img(c.b, base) + "<span>" + h_esc(c.b.title) + "</span></a>"
         + "<span class=\"grow\"></span>"
         + search_box(c, base)
         + repolink
@@ -185,6 +186,22 @@ pub Str layout(Ctx c, Str slug, Str inner, List(Heading) toc, Bool wide) {
         + "</header>"
         + "<div class=\"shell" + (if (toc.len() == 0) { " no-toc" } else { "" }) + "\">" + sidebar(c, slug) + "<main id=\"content\"><div class=\"main" + (if (wide) { " wide" } else { "" }) + "\">" + inner + "</div></main>" + toc_html(toc) + "</div>"
         + "</body></html>";
+}
+
+// The header's logo (book.toml `logo`, `logo_dark`): a full-colour one is
+// drawn as it is, with a dark-theme twin when the book has one; the
+// default is the monochrome Logo.svg, inverted in the dark theme.
+pub Str brand_img(Book b, Str base) {
+    if (b.logo == "") { return "<img class=\"invert-dark\" src=\"" + base + "/Logo.svg\" alt=\"\">"; }
+    Str light = "<img src=\"" + base + "/" + h_esc(b.logo) + "\" alt=\"\"";
+    if (b.logo_dark == "") { return light + ">"; }
+    return light + " class=\"only-light\"><img class=\"only-dark\" src=\"" + base + "/" + h_esc(b.logo_dark) + "\" alt=\"\">";
+}
+
+// A book with its own logo uses it as the browser tab's icon too.
+pub Str icon_link(Book b, Str base) {
+    if (b.logo == "") { return ""; }
+    return "<link rel=\"icon\" href=\"" + base + "/" + h_esc(b.logo) + "\">";
 }
 
 // The theme and drawer script. When serving, Datastar drives the drawer
